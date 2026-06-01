@@ -1,24 +1,38 @@
 {
-  "name": "@bufferpunk/schema",
-  "version": "3.1.0",
+  "name": "@bufferpunk/modelcore",
+  "version": "1.0.0",
   "description": "A runtime schema and type validator for JavaScript and TypeScript.",
   "type": "module",
   "main": "base.js",
   "types": "base.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node --test"
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/bufferpunk/schema.git"
+    "url": "https://github.com/bufferpunk/modelcore.git"
   },
   "keywords": [
     "schema",
+    "modeling",
     "validation",
     "typescript",
     "javascript",
-    "runtime"
+    "runtime",
+    "compile-time",
+    "design",
+    "domain-driven design",
+    "type inference",
+    "data modeling",
+    "data validation",
+    "schema validation",
+    "type safety",
+    "data parsing",
+    "data transformation",
+    "object modeling",
+    "class-based schema"
   ],
   "author": "Buffer Punk",
   "license": "MIT",

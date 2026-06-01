@@ -122,12 +122,12 @@ test("supports custom base model inheritance", () => {
   assert.equal(User.collection, "users");
 });
 
-test("coerce Date when parseConfig.coerce true", () => {
+test("coerce Date when coerce true", () => {
   class Item extends Base {
-    static schema = { createdAt: { type: Date } };
+    static schema = { createdAt: { type: Date, coerce: true } };
   }
 
-  const it = new Item({ createdAt: "2020-01-01T00:00:00Z" }, { coerce: true });
+  const it = new Item({ createdAt: "2020-01-01T00:00:00Z" });
   assert.ok(it.createdAt instanceof Date);
 });
 
@@ -196,4 +196,133 @@ test("reassigning array property revalidates and persists values", () => {
   a.tags = ["  new ", " other "];
   assert.equal(a.tags[0], "new");
   assert.equal(a.tags[1], "other");
+});
+
+test("custom Email type preserves instance shape and nested subscribers", () => {
+  class Email extends String {
+    constructor(email) {
+      if (!/^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z]{2,})+$/.test(email)) throw new Error("Invalid email");
+      super(email.trim().toLowerCase());
+    }
+  }
+
+  class User extends Base {
+    static schema = {
+      channel: {
+        type: Object,
+        keys: {
+          name: { type: String },
+          email: { type: Email, optional: true },
+          subscribers: {
+            type: Array,
+            optional: true,
+            default: [],
+            values: {
+              type: Object,
+              keys: {
+                name: { type: String },
+                email: { type: Email, optional: true }
+              }
+            }
+          }
+        }
+      }
+    };
+  }
+
+  const user = User.createFrom({
+    channel: {
+      name: "email",
+      email: new Email("john@example.com"),
+      subscribers: [ { name: "Alice", email: new Email("alice@example.com") } ]
+    }
+  });
+
+  assert.ok(user.channel.email instanceof Email);
+  assert.ok(user.channel.subscribers[0].email instanceof Email);
+});
+
+test("validated arrays: fill forbidden, push/unshift/splice validate items", () => {
+  class A extends Base {
+    static schema = {
+      tags: {
+        type: Array,
+        default: [],
+        values: { type: String, beforeChecks: (v) => typeof v === "string" ? v.trim() : v }
+      }
+    };
+  }
+
+  const a = new A({ tags: ["init"] });
+
+  // fill is explicitly forbidden
+  assert.throws(() => a.tags.fill("x"), /Array.fill\(\) is not allowed/);
+
+  // push/unshift validate items and reject wrong types
+  assert.throws(() => a.tags.push(123), /Invalid type/);
+  assert.throws(() => a.tags.unshift(123), /Invalid type/);
+
+  // splice add path validates
+  assert.throws(() => a.tags.splice(1, 0, 456), /Invalid type/);
+});
+
+test("default factories produce distinct values and are applied when missing", () => {
+  class Item extends Base {
+    static schema = {
+      createdAt: { type: Date, default: () => new Date() },
+      id: { type: String, default: () => Math.random().toString(36).slice(2) }
+    };
+  }
+
+  const a = new Item({});
+  const b = new Item({});
+  assert.ok(a.createdAt instanceof Date && b.createdAt instanceof Date);
+  assert.notEqual(a.id, b.id);
+});
+
+test("nested validate() throws and blocks construction when required nested key missing", () => {
+  class User extends Base {
+    static schema = {
+      channel: {
+        type: Object,
+        keys: { name: { type: String }, email: { type: String, optional: true } },
+        validate: (v) => { if (v.name === 'email' && !v.email) throw new Error('missing email'); }
+      }
+    };
+  }
+
+  assert.throws(() => User.createFrom({ channel: { name: 'email' } }), /missing email/);
+});
+
+test("splice delete-only works and does not validate when no items added", () => {
+  class C extends Base {
+    static schema = { arr: { type: Array, default: [], values: { type: String } } };
+  }
+  const c = new C({ arr: ['a','b','c'] });
+  // delete only
+  c.arr.splice(1,1);
+  assert.deepEqual(c.arr, ['a','c']);
+});
+
+test("array with object values enforce validation on nested objects", () => {
+  class C extends Base {
+    static schema = {
+      arr: {
+        type: Array,
+        default: [],
+        values: {
+          type: Object,
+          keys: {
+            name: { type: String, immutable: true },
+            age: { type: Number, min: 0 }
+          }
+        }
+      }
+    };
+  }
+
+  const c = new C({ arr: [{ name: 'Alice', age: 30 }] });
+  assert.doesNotThrow(() => c.arr.push({ name: 'Bob', age: 25 }));
+  assert.throws(() => c.arr[0].name = 'Charlie');
+  assert.throws(() => c.arr.push({ name: 'Charlie', age: -5 }));
 });
