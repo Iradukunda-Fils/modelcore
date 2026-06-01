@@ -1,16 +1,16 @@
 import Base from "../base.js";
+// You should import this as "@bufferpunk/modelcore" in your projects. It's only imported like this here for testing purposes.
+// This example is for JavaScript. See user.ts for the TypeScript version with type inference and hints.
 
 class User extends Base {
-    static collection = "users";
     static version = 1;
-    static immutable = false;
     static schema = {
         id: { type: String, optional: true, immutable: true, default: () => crypto.randomUUID() },
         joinedOn: { type: Date, default: () => new Date(), optional: true },
         name: {
             type: String,
-            maxLength: 80,
-            minLength: 5,
+            max: 80,
+            min: 5,
             optional: true,
             beforeChecks: (value) => typeof value === "string" ? value.trim() : value,
             afterChecks: (value) => value.replace(/\s+/g, " ")
@@ -18,9 +18,9 @@ class User extends Base {
         channel: {
             type: Object,
             keys: {
-                name: { type: String, maxLength: 5, enum: ["phone", "email"], immutable: true },
-                email: { type: String, maxLength: 35, minLength: 5, optional: true },
-                phone: { type: String, maxLength: 15, minLength: 5, optional: true }
+                name: { type: String, max: 5, enum: ["phone", "email"], immutable: true },
+                email: { type: String, max: 35, min: 5, optional: true },
+                phone: { type: String, max: 15, min: 5, optional: true }
             },
             validate: (value) => {
                 if (value.name === "email" && !/^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z]{2,})+$/.test(value.email))
@@ -31,8 +31,8 @@ class User extends Base {
         },
         language: {
             type: String,
-            maxLength: 20,
-            minLength: 5,
+            max: 20,
+            min: 5,
             optional: true,
             default: "english",
             enum: ["english", "spanish", "portuguese"],
@@ -47,19 +47,19 @@ class User extends Base {
             values: {
                 type: Object,
                 keys: {
-                    make: { type: String, maxLength: 20, minLength: 2 },
-                    model: { type: String, maxLength: 20, minLength: 2 },
+                    make: { type: String, max: 20, min: 2 },
+                    model: { type: String, max: 20, min: 2 },
                     year: { type: Number, optional: true, immutable: true },
-                    plate_number: { type: String, maxLength: 20, minLength: 3 },
+                    plate_number: { type: String, max: 20, min: 3 },
                     color: {
                         type: String,
-                        maxLength: 10,
-                        minLength: 3,
+                        max: 10,
+                        min: 3,
                         enum: ["blue", "red", "black", "white", "silver"],
                         beforeChecks: (value) => typeof value === "string" ? value.toLowerCase().trim() : value,
                         afterChecks: (value) => value.charAt(0).toUpperCase() + value.slice(1)
                     },
-                    img_url: { type: String, maxLength: 200, minLength: 5, optional: true }
+                    img_url: { type: String, max: 200, min: 5, optional: true }
                 }
             }
         }
@@ -75,23 +75,17 @@ const user = new User({
     ]
 });
 
-console.log("Initial user:");
-console.log(Object.values(user));
+user.cars[0].model = "Corolla"; // Works! Model is mutable.
 
-try {
-    user.update({
-        name: "   John    Doe   ",
-        channel: { name: "phone", phone: "1234567890" },
-        cars: [
-            { make: "Toyota", model: "Camry", year: 2021, plate_number: "ABC123", color: "blue" },
-            { make: "Honda", model: "Civic", plate_number: "XYZ789", color: "red" }
-        ]
-    });
-    console.log("\nUpdated user:");
-    console.log(Object.values(user));
-} catch (error) {
-    console.error("Error updating user:", error.message);
-}
+// Fails! Year is immutable.
+try { user.cars[0].year = 2021; } catch (error) { console.error("Error updating user:", error.message); }
+
+// Fails! Index 0 can not be manually overwritten. use unshift, push, splice etc to change the array instead.
+try { user.cars[0] = "Not a car"; } catch (error) { console.error("Error updating user:", error.message); }
+
+user.cars.push({ make: "Ford", model: "Mustang", year: 2019, plate_number: "MUS456", color: "black" });
+console.log("\nUpdated cars:");
+console.log(user.cars);
 
 /*
 This example shows:
