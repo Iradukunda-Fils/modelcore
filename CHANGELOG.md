@@ -1,4 +1,31 @@
-# Changelog
+# CHANGELOG
+
+All notable changes to this project will be documented in this file.
+
+## [1.0.0] - 2024-06-30
+- Project renamed from `@bufferpunk/schema` to `@bufferpunk/modelcore` to better reflect its focus on runtime entities and validation rather than just schema definition.
+- Improve TypeScript ergonomics: recommend `as const` schemas and provide `createFrom` factory for single-source-of-truth typed instantiation.
+- Map runtime constructors (including custom classes) to instance types for better editor hovers and instance validation.
+- Harden array behavior: non-writable index properties, guarded `push`/`unshift`/`splice` that validate items, and forbid `fill` to maintain integrity.
+- Preserve schema literal types and avoid broad index signatures that produced `any` in editor hovers.
+- Expand test coverage: added/merged comprehensive tests covering arrays, immutability, nested validation, defaults, and custom types.
+- Add GitHub Actions CI workflow to run build, tests, and coverage.
+- Rewrite README to focus on technical usage and TypeScript guidance; extract manifesto into `manifesto.md` for positioning and goals.
+- `createFrom()` factory for typed model instantiation from static `schema`.
+- Improved TypeScript mapped types to infer instance shapes from `schema` definitions when used with `as const`.
+- Custom constructor handling so class types (e.g., `Email`) map to their instances at the type level and are validated at runtime.
+- Extensive tests covering mutation semantics and validation rules.
+- `.github/workflows/ci.yml` to run build and tests on push/PR.
+
+### Fixed
+- Fixed array mutation edge-cases (splice/delete-only behavior) and ensured index descriptors are rebuilt after guarded mutations.
+- Removed class-level coerce which is dangerous and not commonly needed; coercion should be opt-in per field or via constructor config.
+
+## Migration notes
+- Install the new package: `npm install @bufferpunk/modelcore`
+- Update imports from `@bufferpunk/schema` to `@bufferpunk/modelcore`
+- If using TypeScript, update schema definitions to use `as const satisfies SchemaDefinition` for better type inference, and use the `createFrom` factory method for instantiation to get typed instances.
+- Review the new README and manifesto for updated usage patterns and design philosophy.
 
 ## [3.1.0] - 2026-05-12
 

@@ -11,24 +11,48 @@ export interface FieldConfig {
     validate?: (value: any) => void;
     keys?: Record<string, FieldConfig>;
     values?: FieldConfig;
+    coerce?: boolean;
 }
 export interface SchemaDefinition {
     [key: string]: FieldConfig;
 }
 export interface parserConfig {
-    coerce?: boolean;
     safe?: boolean;
 }
+type UnwrapTypeConstructor<T> = T extends StringConstructor ? string : T extends NumberConstructor ? number : T extends BooleanConstructor ? boolean : T extends DateConstructor ? Date : T extends ArrayConstructor ? any[] : T extends ObjectConstructor ? Record<string, any> : T extends new (...args: any[]) => infer R ? R : unknown;
+type InferFieldRaw<T extends FieldConfig> = T['keys'] extends Record<string, FieldConfig> ? InferObject<T> : T['values'] extends FieldConfig ? InferArray<T> : UnwrapTypeConstructor<T['type']>;
+type InferField<T extends FieldConfig> = T['optional'] extends true ? InferFieldRaw<T> | undefined : InferFieldRaw<T>;
+type OptionalKeys<T extends Record<string, FieldConfig>> = {
+    [K in keyof T]: T[K]['optional'] extends true ? K : never;
+}[keyof T];
+type RequiredKeys<T extends Record<string, FieldConfig>> = {
+    [K in keyof T]: T[K]['optional'] extends true ? never : K;
+}[keyof T];
+type InferObject<T extends FieldConfig> = T['keys'] extends Record<string, FieldConfig> ? {
+    [K in RequiredKeys<T['keys']>]: InferFieldRaw<T['keys'][K]>;
+} & {
+    [K in OptionalKeys<T['keys']>]?: InferFieldRaw<T['keys'][K]>;
+} : Record<string, any>;
+type InferArray<T extends FieldConfig> = T['values'] extends FieldConfig ? Array<InferField<T['values']>> : any[];
+export type SchemaToType<S extends SchemaDefinition> = {
+    [K in RequiredKeys<S>]: InferFieldRaw<S[K]>;
+} & {
+    [K in OptionalKeys<S>]?: InferFieldRaw<S[K]>;
+};
 export default class Base {
-    [key: string]: any;
     static schema: SchemaDefinition;
     static version?: number;
     static immutable?: boolean;
-    static parseConfig?: parserConfig;
+    version?: number | undefined;
+    [key: string]: any;
     constructor(obj: Record<string, any>, parseConfig?: parserConfig);
+    static createFrom<T extends typeof Base>(this: T, obj: Partial<SchemaToType<T['schema']>>, // Partial allows missing optional keys on input
+    parseConfig?: parserConfig): Partial<SchemaToType<T['schema']>>;
     update(obj: Record<string, any>, parseConfig?: parserConfig, isNew?: boolean): void;
     toObject(): Record<string, any>;
+    json(): string;
     private setProperties;
     private runValidate;
     private validateType;
 }
+export {};
