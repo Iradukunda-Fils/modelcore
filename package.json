@@ -1,7 +1,7 @@
 {
   "name": "@bufferpunk/modelcore",
-  "version": "1.0.0",
-  "description": "A runtime schema and type validator for JavaScript and TypeScript.",
+  "version": "1.1.0",
+  "description": "A blazing fast, lightweight and Reactive Class-Based Object Modeling framework",
   "type": "module",
   "main": "base.js",
   "types": "base.d.ts",
