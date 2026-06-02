@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-06-02
+
+### Added
+- Rich and detailed error handling with descriptive error classes to enable programmatic error handling and clearer error semantics.
+
+### Changed
+- Removed redundant checks
+- Fixed loop on error thrown during construction to properly set all properties to the error object instead of just the enumerable ones.
+
+### Notes
+- These changes improve runtime safety and the test coverage baseline; see tests in `test/base.test.js` for usage patterns.
+
 ## [1.0.0] - 2024-06-30
 - Project renamed from `@bufferpunk/schema` to `@bufferpunk/modelcore` to better reflect its focus on runtime entities and validation rather than just schema definition.
 - Improve TypeScript ergonomics: recommend `as const` schemas and provide `createFrom` factory for single-source-of-truth typed instantiation.

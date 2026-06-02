@@ -1,8 +1,17 @@
 # ModelCore - Runtime Entity Integrity for JavaScript and TypeScript
 
-A lightweight runtime schema validator for JavaScript and TypeScript models with support for immutability, field-level validation hooks, and TypeScript-friendly ergonomics.
+![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/schema/ci.yml?branch=main)
+![Coverage](https://img.shields.io/badge/coverage-100%25-green)
+![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)
+![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)
 
-`@bufferpunk/modelcore` is built around a `Base` class that validates plain objects using a static `schema` definition. It is useful when working with NoSQL data, API payloads, and nested objects that need runtime guarantees and constraints.
+**Pydantic-inspired • Lightweight • Backend & Frontend friendly**
+
+A blazing fast, lightweight and Reactive Class-Based Object Modeling framework.
+
+Build clean, safe, and delightful domain entities for TypeScript and JavaScript.
+
+`@bufferpunk/modelcore` is built around a `Base` class that validates plain objects using a static `schema` definition. It is useful when working with NoSQL data, API payloads, and nested objects that need runtime and compile-time guarantees and constraints.
 
 ## What It Does
 
@@ -18,6 +27,27 @@ When a model extends `Base` and defines a static `schema`, instance creation and
 - enforce immutability at class or field level
 
 This package now also provides a typed factory pattern (`createFrom`) and improved TypeScript mappings so editors receive useful type information and inferred instance types when schemas are declared with `as const`.
+
+## Comparison to Other Libraries
+
+- **Zod / Joi / Yup**: These are schema validation libraries that focus on validating plain objects. They do not provide a class-based model with runtime immutability or automatic coercion. You would need to manually validate and then assign values to a class instance.
+- **TypeORM / Sequelize**: These are ORM libraries that provide class-based models but are tightly coupled to databases and do not focus on runtime validation or immutability outside of the context of database operations.
+- **MobX / Vue Reactivity**: These libraries provide reactivity and state management but do not enforce validation rules or immutability at the runtime level. They track changes but do not govern them.
+
+**ModelCore** fills the gap by providing a class-based modeling system that enforces validation and immutability rules at runtime and compile-time, making it suitable for both frontend and backend applications where data integrity is crucial.
+
+**Here is a simple comparison with other libraries**
+
+| Feature                     | ModelCore                 | Zod / Joi / Yup           | TypeORM / Sequelize       | MobX / Vue Reactivity    |
+|-----------------------------|---------------------------|---------------------------|---------------------------|--------------------------|
+| Class-based models          | ✅                        | ❌                        | ✅                         | ❌                         |
+| Runtime validation          | ✅                        | ✅                        | Limited (database-focused) | ❌                         |
+| Reactivity                  | ✅                        | ❌                        | ❌                         | ✅                         |
+| Immutability enforcement    | ✅                        | ❌                        | Limited (database-focused) | ❌                         |
+| Automatic coercion          | ✅                        | Limited (Zod has some coercion) | ❌                         | ❌                         |
+| Nested object validation    | ✅                        | ✅                        | Limited (database-focused) | ❌                         |
+| TypeScript support          | ✅                        | ✅                        | ✅                         | ✅                         |
+| Frontend & Backend friendly | ✅                        | ✅                        | Backend-focused            | Frontend-focused           |
 
 ## Installation
 
@@ -162,13 +192,13 @@ class ImmutableUser extends Base {
 
 ## Updating Instances
 
-Use the `update()` method or regular property assignment to modify instance properties.
+Use regular property access (recommended) to modify instance properties or the `update()` method (best if you want to update the whole object).
 The constructor automatically includes the `version` if defined on the class.
 
 ```ts
 const user = new User({ name: 'John', role: 'user' });
-user.update({ role: 'admin' });
-user.name = 'Jane'; // also works, with validation (eassiest for simple updates)
+user.name = 'Jane'; // (easiest and recommended for simple property changes)
+user.update({ name: 'Jane', role: 'admin' });
 ```
 
 ## Factory and TypeScript ergonomics
@@ -212,6 +242,31 @@ npm test
 ```
 
 The repository includes a GitHub Actions workflow to run build and test on Node LTS.
+
+## Benchmarking
+
+Use the included micro-benchmark to compare construction, factory creation, updates, and mutation paths:
+
+```bash
+npm run bench
+```
+
+You can adjust iteration count with `BENCH_ITERATIONS`:
+
+```bash
+BENCH_ITERATIONS=100000 npm run bench
+```
+
+Example result on this repository, run with `BENCH_ITERATIONS=100000`:
+
+```text
+construct + validate           1512.23 ms  66128 ops/sec
+createFrom factory             1452.82 ms  68832 ops/sec
+update validated fields        2831.84 ms  35313 ops/sec
+array mutations                2747.17 ms  36401 ops/sec
+```
+
+The benchmark is intentionally small and repeatable. It is useful for comparing changes between commits, not for replacing a full profiler or load test.
 
 ## Why Runtime Entities Matter
 

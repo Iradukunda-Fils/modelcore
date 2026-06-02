@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import Base from "../base.js";
 
-/* Basic tests to verify core functionality. You can add more as needed. Send a PR to be included. */
+/* Tests to verify core functionality. You can add more as needed. Send a PR to be included. */
 
 test("validates fields, applies defaults, and runs hooks", () => {
   class User extends Base {
@@ -88,15 +88,17 @@ test("immutable properties reject updates", () => {
     };
   }
 
-  const user = new User({ name: "John" });
 
   assert.throws(() => {
+    const user = new User({ name: "John" });
     user.update({ name: "Jane" });
   }, /Cannot update immutable property 'name'/);
   assert.throws(() => {
+    const user = new User({ name: "John" });
     user.name = "Jane";
   }, /Cannot update immutable property 'name'/);
   assert.throws(() => {
+    const user = new User({ name: "John" });
     user.profile.role = "admin";
   }, /Cannot update immutable property 'profile.role'/);
 });
@@ -326,3 +328,97 @@ test("array with object values enforce validation on nested objects", () => {
   assert.throws(() => c.arr[0].name = 'Charlie');
   assert.throws(() => c.arr.push({ name: 'Charlie', age: -5 }));
 });
+
+test("toObject returns plain object with all transformations applied", () => {
+  class U extends Base {
+    static schema = {
+      name: { type: String, beforeChecks: (v) => v.trim(), afterChecks: (v) => v.toUpperCase() },
+      tags: { type: Array, default: [], values: { type: String, beforeChecks: (v) => v.trim() } }
+    };
+  }
+
+  const u = new U({ name: '  alice  ', tags: ['  tag1  ', 'tag2'] });
+  const obj = u.toObject();
+  assert.deepEqual(obj, { name: 'ALICE', tags: ['tag1', 'tag2'] });
+});
+
+test("custom class extending Array works like a normal array", () => {
+  class customArray extends Array {
+    constructor(...args) {
+      super(...args);
+    }
+  }
+
+  class C extends Base {
+    static schema = { arr: { type: customArray, optional: true, default: () => new customArray(), values: { type: String, optional: true } } };
+  }
+
+  const c = new C({});
+  assert.doesNotThrow(() => c.arr.push('hello'));
+  assert.throws(() => c.arr.fill('x'), /Array.fill\(\) is not allowed/);
+});
+
+test("safe parse returns object with errors instead of throwing", () => {
+  class U extends Base {
+    static schema = {
+      name: { type: String },
+      age: { type: Number, min: 0 }
+    };
+  }
+
+  const result = new U({ name: 'Alice', age: -5 }, { safe: true });
+  assert.equal(result.name instanceof Error, true);
+  assert.deepEqual(result.name.path, ['age']); // failed at age
+});
+
+test("concat rejects non-array inputs and validates array inputs", () => {
+  class A extends Base {
+    static schema = {
+      tags: {
+        type: Array,
+        default: [],
+        values: { type: String, beforeChecks: (v) => typeof v === 'string' ? v.trim() : v }
+      }
+    };
+  }
+
+  const a = new A({ tags: ['init'] });
+
+  // concat with non-array should throw
+  assert.throws(() => { a.tags.concat(123); }, /Can only concat arrays/);
+
+  // concat with arrays should return validated combined array
+  const res = a.tags.concat([' new ', 'other']);
+  assert.deepEqual(res, ['init', 'new', 'other']);
+});
+
+test("concat on custom Array subclass validates and returns array", () => {
+  class CustomArray extends Array {
+    constructor(...args) { super(...args); }
+  }
+
+  class C extends Base {
+    static schema = {
+      arr: { type: CustomArray, default: () => new CustomArray(), values: { type: String, beforeChecks: (v) => typeof v === 'string' ? v.trim() : v } }
+    };
+  }
+
+  const c = new C({});
+  const out = c.arr.concat([' hello ', ' world']);
+  assert.deepEqual(Array.from(out), ['hello', 'world']);
+  assert.throws(() => { c.arr.concat(123); }, /Can only concat arrays/);
+});
+
+test("unshift with valid items rebuilds indexed properties", () => {
+  class A extends Base {
+    static schema = {
+      tags: { type: Array, default: [], values: { type: String, beforeChecks: (v) => typeof v === 'string' ? v.trim() : v } }
+    };
+  }
+
+  const a = new A({ tags: ['b'] });
+  a.tags.unshift('a');
+  assert.equal(a.tags[0], 'a');
+  assert.equal(a.tags[1], 'b');
+});
+
