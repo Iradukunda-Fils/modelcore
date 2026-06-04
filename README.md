@@ -25,6 +25,7 @@ When a model extends `Base` and defines a static `schema`, instance creation and
 - run custom `beforeChecks` and `afterChecks` hooks if present
 - run custom `validate` hook for final validation if present
 - enforce immutability at class or field level
+- support typed unions with `Union(...)`
 
 This package now also provides a typed factory pattern (`createFrom`) and improved TypeScript mappings so editors receive useful type information and inferred instance types when schemas are declared with `as const`.
 
@@ -111,7 +112,7 @@ class User extends Base {
   } as const satisfies SchemaDefinition;
 }
 
-const user = User.createFrom({ name: '   Ana   Silva   ' });
+const user = User.createFrom({ name: '   Ana   Silva   ' }); // creatFrom() is a factory function for better TypeScript type hints and inference
 console.log(user);
 ```
 
@@ -133,24 +134,64 @@ const userSchema = {
   id: Number,
   email: Email,
   name: String,
-  tags: [String]
+  tags: { type: Array, values: String } // all values of this array will be strings
 } as const satisfies SchemaDefinition;
 
 class User extends Base {}
 User.schema = userSchema;
 
-// typed factory; the instance type is inferred from the schema
+// typed factory; the types are inferred from the schema
 const u = User.createFrom({ id: 1, email: new Email("a@b.com"), name: "A", tags: ["x"] });
 
-u.email = new Email("b@c.com"); // typescript will enforce that this is an Email instance
+u.email = new Email("b@c.com"); // typescript and ModelCore will enforce that this is an Email instance
+```
+
+## Union Types
+
+Use `Union(...)` to define a field that accepts multiple constructor types while preserving TypeScript inference.
+
+```ts
+import Base, { SchemaDefinition, Union } from "@bufferpunk/modelcore";
+
+class User extends Base {
+  static schema = {
+    identifier: Union(String, Number),
+    contact: {
+      type: Object,
+      keys: { // you can also use `properties`
+        email: String,
+        phone: { type: String, optional: true }
+      }
+    }
+  } as const satisfies SchemaDefinition;
+}
+
+const user = User.createFrom({ identifier: "123", contact: { email: "a@b.com" } });
+```
+
+`Union` can also combine custom classes and primitives:
+
+```ts
+class Email extends String {
+  constructor(value: string) {
+    super(value);
+  }
+}
+
+class User extends Base {
+  static schema = {
+    contact: Union(String, Email)
+  } as const satisfies SchemaDefinition;
+}
 ```
 
 ## Field Configuration
 
 Each field in a schema can include:
 
-- `type` (required): constructor such as `String`, `Number`, `Boolean`, `Date`, `Array`, `Object` or custom classes and types
+- `type` (required): constructor such as `String`, `Number`, `Boolean`, `Date`, `Array`, `Object` or custom classes and types. Nested object and array schemas can also use shorthand constructors directly inside `keys` and `values`.
 - `optional`: allows missing value
+- `required`: alias for `optional: false` (can be used for clearer schema intent)
 - `default`: fallback value when input is `null` or `undefined` (function values are executed)
 - `enum`: list of allowed values
 - `min`, `max`: length constraints for values with a `length` property
@@ -159,7 +200,7 @@ Each field in a schema can include:
 - `afterChecks(value)`: transforms value after type/length/enum checks and before validation
 - `validate(value)`: custom final validation logic
 - `values`: required for `Array` types to validate each array item
-- `keys`: required for `Object` types to validate nested properties
+- `keys` / `properties`: required for `Object` types to validate nested properties
 
 The `type` property is the only required configuration for a field. All other properties are optional and can be used as needed to enforce constraints and transformations.
 
@@ -259,12 +300,14 @@ BENCH_ITERATIONS=100000 npm run bench
 
 Example result on this repository, run with `BENCH_ITERATIONS=100000`:
 
-```text
-construct + validate           1512.23 ms  66128 ops/sec
-createFrom factory             1452.82 ms  68832 ops/sec
-update validated fields        2831.84 ms  35313 ops/sec
-array mutations                2747.17 ms  36401 ops/sec
-```
+
+│ (index) │ Benchmark                                        │ Time (ms) │ Ops/sec |
+|---------|--------------------------------------------------|-----------|---------|
+│ 0       │ 'construct + validate'                           │ 1166      │ 85781   |
+│ 1       │ 'createFrom factory'                             │ 1080      │ 92620   |
+│ 2       │ 'construct + validate + update validated fields' │ 2661      │ 46729   |
+│ 3       │ 'construct + validate + array mutations'         │ 2845      │ 48088   |
+
 
 The benchmark is intentionally small and repeatable. It is useful for comparing changes between commits, not for replacing a full profiler or load test.
 

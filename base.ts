@@ -2,6 +2,7 @@ export interface FieldConfig {
   type: any;
   immutable?: boolean;
   optional?: boolean;
+  required?: boolean; // Alias for optional: false, included for clarity and flexibility in schema definitions
   default?: any;
   enum?: any[];
   max?: number;
@@ -9,13 +10,14 @@ export interface FieldConfig {
   beforeChecks?: (value: any) => any;
   afterChecks?: (value: any) => any;
   validate?: (value: any) => void;
-  keys?: Record<string, FieldConfig>;
-  values?: FieldConfig;
+  keys?: Record<string, FieldConfig | Function>;
+  properties?: Record<string, FieldConfig | Function>;
+  values?: FieldConfig | Function;
   coerce?: boolean;
 }
 
 export interface SchemaDefinition {
-  [key: string]: FieldConfig;
+  [key: string]: Function | FieldConfig;
 }
 
 export interface parserConfig {
@@ -41,7 +43,7 @@ export interface errorObject {
 
 export class ModelCoreError extends Error {
   declare source: string | Function | undefined;
-  declare path: Array<string | number> | string | undefined;
+  declare path: Array<string | number>;
   declare expected: any;
   declare received: any;
   declare code: string | undefined;
@@ -52,7 +54,7 @@ export class ModelCoreError extends Error {
     const ctor = this.constructor as typeof ModelCoreError;
     this.name = ctor.errorName;
     this.source = errObj.source;
-    this.path = typeof errObj.path === "string" ? parsePath(errObj.path) : errObj.path;
+    this.path = parsePath(errObj.path);
     this.expected = errObj.expected;
     this.received = errObj.received;
     this.code = errObj.code;
@@ -73,6 +75,23 @@ export class ValueError extends ModelCoreError { static errorName: string = "Val
 
 // ==================== TYPE INFERENCE ====================
 
+export function Union<
+  T extends readonly (abstract new (...args: any) => any)[]
+>(...args: T) {
+  if (args.length === 0) throw new Error("Union must have at least one type");
+  return class union extends ModelCoreUnion {
+    static unionTypes: T = args
+    constructor() {
+      super(...args)
+      return this as InstanceType<T[number]>;
+    }
+  };
+}
+
+class ModelCoreUnion extends Array<any> {
+  static unionTypes: readonly any[] = []
+}
+
 type UnwrapTypeConstructor<T> =
   T extends StringConstructor ? string :
   T extends NumberConstructor ? number :
@@ -83,36 +102,38 @@ type UnwrapTypeConstructor<T> =
   T extends new (...args: any[]) => infer R ? R :
   unknown;
 
-type InferFieldRaw<T extends FieldConfig> =
-  T['keys'] extends Record<string, FieldConfig> ? InferObject<T> :
-  T['values'] extends FieldConfig ? InferArray<T> :
-  UnwrapTypeConstructor<T['type']>;
+// 2. Normalize a field: detect if it's a shorthand constructor or a config object
+type NormalizeField<T> = T extends FieldConfig ? T : { type: T }
 
-type InferField<T extends FieldConfig> = 
-  T['optional'] extends true 
-    ? InferFieldRaw<T> | undefined
-    : InferFieldRaw<T>;
+// 3. Extract types for nested structures or simple primitives (using normalized fields)
+type InferFieldRaw<T> = 
+  NormalizeField<T> extends infer F extends FieldConfig ?
+    F['type'] extends { unionTypes: readonly any[] } ? InstanceType<F['type']['unionTypes'][number]> :
+     F['type'] extends ObjectConstructor ? InferObject<F> :
+      F['type'] extends ArrayConstructor ? InferArray<F> :
+      UnwrapTypeConstructor<F['type']>
+    : any;
 
-type OptionalKeys<T extends Record<string, FieldConfig>> = {
-  [K in keyof T]: T[K]['optional'] extends true ? K : never
+// 4. Helper to cleanly separate required vs optional keys
+type OptionalKeys<T extends Record<string, any>> = {
+  [K in keyof T]: NormalizeField<T[K]>['optional'] extends true ? K : NormalizeField<T[K]>['required'] extends false ? K : never
 }[keyof T];
 
-type RequiredKeys<T extends Record<string, FieldConfig>> = {
-  [K in keyof T]: T[K]['optional'] extends true ? never : K
+type RequiredKeys<T extends Record<string, any>> = {
+  [K in keyof T]: NormalizeField<T[K]>['optional'] extends true ? never : NormalizeField<T[K]>['required'] extends false ? never : K
 }[keyof T];
 
+// 5. Remap objects cleanly, handling both shorthand and verbose nested keys
 type InferObject<T extends FieldConfig> =
-  T['keys'] extends Record<string, FieldConfig>
+  T['keys'] extends Record<string, any>
     ? { [K in RequiredKeys<T['keys']>]: InferFieldRaw<T['keys'][K]> } & 
       { [K in OptionalKeys<T['keys']>]?: InferFieldRaw<T['keys'][K]> }
     : Record<string, any>;
 
-type InferArray<T extends FieldConfig> =
-  T['values'] extends FieldConfig
-    ? Array<InferField<T['values']>>
-    : any[];
+type InferArray<T extends FieldConfig> = T['type'] extends ArrayConstructor ? Array<InferFieldRaw<T['values']>> : any[];
 
-type SchemaToType<S extends SchemaDefinition> = 
+// 6. Map over the entire schema definition (handles mix of shorthand and verbose keys)
+export type SchemaToType<S extends Record<string, any>> = 
   { [K in RequiredKeys<S>]: InferFieldRaw<S[K]> } & 
   { [K in OptionalKeys<S>]?: InferFieldRaw<S[K]> };
 
@@ -121,9 +142,9 @@ type SchemaToType<S extends SchemaDefinition> =
 
 function isNone(that: any): boolean { return that === undefined || that === null; }
 
-function parsePath(path: string): Array<string | number> {
+function parsePath(path: string | undefined): Array<string | number> {
   const parts: Array<string | number> = [];
-  path.replace(/[^.[\]]+/g, (match) => {
+  path?.replace(/[^.[\]]+/g, (match) => {
     if (/^\d+$/.test(match)) parts.push(Number(match));
     else parts.push(match);
     return "";
@@ -143,6 +164,12 @@ function buildError(
   return new errorType({ message, source, path, expected, received, code });
 }
 
+function normalizeConf(conf: FieldConfig | any, path: string): FieldConfig {
+  if (typeof conf === "function") return { type: conf } as FieldConfig;
+  if (conf && typeof conf === "object" && 'type' in conf) return conf as FieldConfig;
+  throw buildError(SchemaDefinitionError, `Invalid schema definition for '${path}'`, undefined, path, null, undefined, "SCHEMA_DEFINITION_ERROR");
+}
+
 
 // ==================== BASE CLASS ====================
 
@@ -153,7 +180,7 @@ export default class Base {
   declare version?: number | undefined;
 
   [key: string]: any;
-  
+
   constructor(obj: Record<string, any>, parseConfig?: parserConfig) {
     this.update(obj, parseConfig, true);
   }
@@ -209,28 +236,29 @@ export default class Base {
     for (const key in schema) {
       const conf = schema[key];
       let value = data[key];
-      if (!conf) throw buildError(
-        SchemaDefinitionError, `'${key}' has no schema. Either remove it from the schema definition or add a schema for it.`,
-        ctor.name, key, null, data[key], "SCHEMA_DEFINITION_ERROR"
-      );
       this.runValidate(conf, value, key, isNew, this, key);
     }
   }
 
-  private runValidate(confPassed: FieldConfig, valuePassed: any, path: string, isNew: boolean, container: Record<string, any> = this, propertyName?: string): any {
+  private runValidate(confPassed: FieldConfig | Function, valuePassed: any, path: string, isNew: boolean, container: Record<string, any> = this, propertyName?: string): any {
     const { conf, value } = this.validateType(confPassed, valuePassed, path);
     let toReturn: typeof conf.type;
-    if (conf.type === Array || conf.type.prototype instanceof Array) {
+    const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
+    if (
+      conf.type === Array ||
+      (unionTypes && unionTypes.some((t: any) => t === Array || t.prototype instanceof Array))
+      || (!unionTypes && conf.type.prototype instanceof Array)
+    ) {
       if (!conf.values) throw buildError(
         SchemaDefinitionError, `Missing array value configuration at ${path}`,
         this.runValidate, path, null, value, "SCHEMA_DEFINITION_ERROR"
       );
 
-      toReturn = new conf.type() as Array<typeof conf.values.type> & { [index: number]: typeof conf.values.type }; // This typing allows us to define non-writable index properties while still maintaining the correct item type for editor hovers and validation
+      toReturn = new conf.type();
       // define non-writable indexed properties to prevent direct overwrites
       for (let i = 0; i < value.length; i++) {
         const validated = this.runValidate(conf.values!, value[i], `${path}[${i}]`, isNew);
-        Object.defineProperty(toReturn, `${i}`, {
+        Object.defineProperty(toReturn, i, {
           value: validated,
           writable: false,
           enumerable: true,
@@ -243,14 +271,9 @@ export default class Base {
 
       Object.defineProperty(toReturn, 'push', {
         value: function (...items: any[]) {
-          const curr = Array.prototype.slice.call(this) as any[];
-          const validatedItems = items.map((item, i) => vd.runValidate(conf.values!, item, `${path}[${curr.length + i}]`, false));
-          const result = curr.concat(validatedItems);
-          // rebuild index properties
-          for (let i = 0; i < (this as any).length; i++) delete (this as any)[i];
-          for (let i = 0; i < result.length; i++) Object.defineProperty(this, `${i}`, { value: result[i], writable: false, enumerable: true, configurable: true });
-          (this as any).length = result.length;
-          return (this as any).length;
+          const validatedItems = items.map((item, i) => vd.runValidate(conf.values!, item, `${path}[${this.length + i}]`, false));
+          for (let i = 0; i < validatedItems.length; i++) Object.defineProperty(this, this.length + i, { value: validatedItems[i], writable: false, enumerable: true, configurable: true });
+          return this.length += validatedItems.length;
         },
         enumerable: false
       });
@@ -264,13 +287,13 @@ export default class Base {
 
       Object.defineProperty(toReturn, 'unshift', {
         value: function (...items: any[]) {
-          const curr = Array.prototype.slice.call(this) as any[];
           const validatedItems = items.map((item, i) => vd.runValidate(conf.values!, item, `${path}[${i}]`, false));
-          const result = validatedItems.concat(curr);
-          for (let i = 0; i < (this as any).length; i++) delete (this as any)[i];
-          for (let i = 0; i < result.length; i++) Object.defineProperty(this, `${i}`, { value: result[i], writable: false, enumerable: true, configurable: true });
-          (this as any).length = result.length;
-          return (this as any).length;
+          for (let i = this.length - 1; i >= 0; i--) {
+            const currVal = this[i];
+            Object.defineProperty(this, i + validatedItems.length, { value: currVal, writable: false, enumerable: true, configurable: true });
+          }
+          for (let i = 0; i < validatedItems.length; i++) Object.defineProperty(this, i, { value: validatedItems[i], writable: false, enumerable: true, configurable: true });
+          return this.length += validatedItems.length;
         },
         enumerable: false
       });
@@ -285,7 +308,7 @@ export default class Base {
           const result = curr.slice(0, s).concat(validatedItems).concat(curr.slice(s + dc));
           const deleted = curr.slice(s, s + dc);
           for (let i = 0; i < (this as any).length; i++) delete (this as any)[i];
-          for (let i = 0; i < result.length; i++) Object.defineProperty(this, `${i}`, { value: result[i], writable: false, enumerable: true, configurable: true });
+          for (let i = 0; i < result.length; i++) Object.defineProperty(this, i, { value: result[i], writable: false, enumerable: true, configurable: true });
           (this as any).length = result.length;
           return deleted;
         },
@@ -307,7 +330,9 @@ export default class Base {
       });
     }
 
-    else if (conf.type === Object && conf.keys) {
+    else if (conf.type === Object || (unionTypes && unionTypes.some((t: any) => t === Object))) {
+      if (!conf.keys && !conf.properties)
+        throw buildError(SchemaDefinitionError, `Object properties schema definition missing for '${path}'`, this.runValidate, path, value.constructor, conf, 'SCHEMA_DEFINITION_ERROR')
       const obj: Record<string, any> = {};
       for (const childKey in conf.keys)
         this.runValidate(conf.keys[childKey], value[childKey], `${path}.${childKey}`, isNew, obj, childKey);
@@ -316,14 +341,16 @@ export default class Base {
 
     else toReturn = value;
 
-    const p = path.match(/[^.[\]]+/g)?.reduce((o, key) => o?.[key], this);
-    if (conf.immutable && !isNone(p) && p !== toReturn)
-      throw buildError(ImmutablePropertyError, `Cannot update immutable property '${path}'`, this.constructor.name, path, null, value, "IMMUTABLE_PROPERTY_UPDATE");
-    if (typeof conf.validate === "function") conf.validate(toReturn);
+    if (conf.immutable && !isNew) {
+      const p = path.match(/[^.[\]]+/g)?.reduce((o, key) => o?.[key], this);
+      if (!isNone(p) && p !== toReturn)
+        throw buildError(ImmutablePropertyError, `Cannot update immutable property '${path}'`, this.constructor.name, path, null, value, "IMMUTABLE_PROPERTY_UPDATE");
+    }
+
+    if (conf.validate && typeof conf.validate === "function") conf.validate(toReturn);
 
     if (propertyName !== undefined) {
       let currentValue = toReturn;
-      delete container[propertyName];
       Object.defineProperty(container, propertyName, {
         get: () => currentValue,
         set: (newVal) => {
@@ -338,7 +365,9 @@ export default class Base {
     return toReturn;
   }
 
-  private validateType(conf: FieldConfig, value: any, path: string): { conf: FieldConfig; value: any } {
+  private validateType(cnf: any, value: any, path: string): { conf: FieldConfig; value: any } {
+    const conf: FieldConfig = normalizeConf(cnf, path);
+    const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
     if (conf.beforeChecks && typeof conf.beforeChecks === "function") {
       const newVal = conf.beforeChecks(value);
       if (!isNone(newVal) || conf.optional) value = newVal;
@@ -352,10 +381,25 @@ export default class Base {
       }
     }
 
-    if (value.constructor !== conf.type) {
+    const isOfType = () => {
+      return (unionTypes && unionTypes.some((t: any) => value.constructor === t)) || value.constructor === conf.type
+    };
+
+    if (!isOfType()) {
       // Attempt to coerce the value to the correct type if possible. Valuable for date strings from a json for example
-      if (conf.coerce) value = new conf.type(value);
-      if (value.constructor !== conf.type || isNaN(value))
+      if (conf.coerce) value = !unionTypes ? new conf.type(value) : (() => {
+        // dangerous but necessary! Javascript will most probably coerce in an invalid away 
+        // like new Array({}) = [{}] instead of throwing so we can check the next type.
+        // We have to accept the language's downsides here. 
+        // Avoid coercion on Unions unless you're sure about the input, as it can lead to unexpected results.
+        // You can instead use beforeChecks() hook to preprocess the value for safety and control.
+        for (const t of unionTypes) {
+          const coerced = new t(value);
+          if (coerced.constructor === t) return coerced;
+        }
+      })();
+
+      if (!isOfType() || isNaN(value))
         throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, null, value, "INVALID_TYPE");
     }
 

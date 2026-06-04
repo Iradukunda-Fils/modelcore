@@ -27,6 +27,12 @@ class User extends Base {
 
 const iterations = Number(process.env.BENCH_ITERATIONS || 25000);
 const warmup = Math.min(2000, Math.max(200, Math.floor(iterations / 10)));
+const results = {
+  'construct + validate': null,
+  'createFrom factory': null,
+  'construct + validate + update validated fields': null,
+  'construct + validate + array mutations': null
+}
 
 function bench(name, fn) {
   for (let i = 0; i < warmup; i++) fn(i);
@@ -34,7 +40,7 @@ function bench(name, fn) {
   for (let i = 0; i < iterations; i++) fn(i);
   const elapsedMs = performance.now() - start;
   const opsPerSec = (iterations / elapsedMs) * 1000;
-  console.log(`${name.padEnd(30)} ${elapsedMs.toFixed(2)} ms  ${opsPerSec.toFixed(0)} ops/sec`);
+  results[name] = { elapsedMs, opsPerSec };
 }
 
 console.log(`Iterations: ${iterations}`);
@@ -60,7 +66,7 @@ bench('createFrom factory', (i) => {
   });
 });
 
-bench('update validated fields', (i) => {
+bench('construct + validate + update validated fields', (i) => {
   const user = new User({
     id: i,
     name: 'Alice',
@@ -69,7 +75,7 @@ bench('update validated fields', (i) => {
   user.update({ name: '  Bob  ', tags: [' x ', ' y '] });
 });
 
-bench('array mutations', (i) => {
+bench('construct + validate + array mutations', (i) => {
   const user = new User({
     id: i,
     name: 'Alice',
@@ -81,3 +87,11 @@ bench('array mutations', (i) => {
   user.tags.splice(1, 0, ' middle ');
   user.tags.concat([' extra ']);
 });
+
+const table = Object.entries(results).map(([name, { elapsedMs, opsPerSec }]) => ({
+  Benchmark: name,
+  'Time (ms)': Math.round(elapsedMs),
+  'Ops/sec': Math.round(opsPerSec)
+}));
+
+console.table(table, ['Benchmark', 'Time (ms)', 'Ops/sec']);

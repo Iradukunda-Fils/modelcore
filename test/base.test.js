@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import Base from "../base.js";
+import Base, { Union } from "../base.ts";
 
 /* Tests to verify core functionality. You can add more as needed. Send a PR to be included. */
 
@@ -181,7 +181,13 @@ test("class-level immutability blocks direct assignment", () => {
 
   const i = new I({ name: "alice" });
   assert.throws(() => { i.name = "bob"; }, /Cannot update immutable object of type I/);
+  assert.throws(() => i.update({ name: "bob"}), /Cannot update immutable object of type I/);
 });
+
+test("array with no values schema throws", () => {
+  class A extends Base { static schema = { tags: Array } }
+  assert.throws(() => new A({ tags: ["Some", "Tags"] }), /Missing array value configuration/)
+})
 
 test("reassigning array property revalidates and persists values", () => {
   class A extends Base {
@@ -422,3 +428,43 @@ test("unshift with valid items rebuilds indexed properties", () => {
   assert.equal(a.tags[1], 'b');
 });
 
+test("simple config without whole object", () => {
+  class U extends Base {
+    static schema = {
+      name: String,
+      tags: { type: Array, default: [], values: { type: String, beforeChecks: (v) => v.trim() } }
+    }
+  };
+
+  assert.doesNotThrow(() => new U({ name: 'Alice' }));
+  const u = new U({ name: 'Alice' });
+  assert.equal(u.name, 'Alice');
+  assert.deepEqual(u.tags, []);
+})
+
+test("undefined config throws error", () => {
+  class U extends Base {
+    static schema = {
+      name: undefined, // Invalid config
+      tags: { type: Array, default: [], values: { type: String, beforeChecks: (v) => v.trim() } }
+    }
+  };
+
+  assert.throws(() => new U({ name: 'Alice' }), /Invalid schema definition/);
+})
+
+test("union functions as intended", () => {
+  class U extends Base {
+    static schema = {
+      name: String,
+      tags: { type: Array, default: [], values: String },
+      age: Union(String, Number),
+      height: { type: Union(Number), coerce: true, optional: true }
+    }
+  };
+
+  assert.deepEqual(new U({ name: "Alice", age: 1 }).toObject(), { name: "Alice", tags: [], age: 1, height: undefined })
+  assert.throws(() => new U({ name: "Alice", age: [] }), /Invalid type/)
+  assert.doesNotThrow(() => new U({ name: "Alice", age: 1, height: "5.5" }))
+  assert.deepEqual(new U({ name: "Alice", age: 1, height: "5.5" }).toObject(), { name: "Alice", tags: [], age: 1, height: new Number(5.5) })
+})

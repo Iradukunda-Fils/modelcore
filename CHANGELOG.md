@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-06-04
+
+### Added
+- `Union(...)` helper for typed union schema fields and runtime validation.
+- support shorthand constructors inside nested `keys` and `values`, so nested fields like `make: String` work naturally.
+- `required` alias support for `optional: false` and clearer required-field intent.
+- `properties` alias support for `Object` field schemas in addition to `keys`.
+
+### Changed
+- improved TypeScript inference for union fields and nested schema shorthand.
+- updated README and docs with union support and nested shorthand examples.
+
+### Fixed
+- corrected schema typings so `Union(String, Number)` behaves correctly with `createFrom` and compile-time inference.
+
 ## [1.1.0] - 2026-06-02
 
 ### Added

@@ -5,7 +5,7 @@ export class ModelCoreError extends Error {
         const ctor = this.constructor;
         this.name = ctor.errorName;
         this.source = errObj.source;
-        this.path = typeof errObj.path === "string" ? parsePath(errObj.path) : errObj.path;
+        this.path = parsePath(errObj.path);
         this.expected = errObj.expected;
         this.received = errObj.received;
         this.code = errObj.code;
@@ -42,11 +42,28 @@ RequiredError.errorName = "RequiredError";
 export class ValueError extends ModelCoreError {
 }
 ValueError.errorName = "ValueError";
+// ==================== TYPE INFERENCE ====================
+export function Union(...args) {
+    var _a;
+    if (args.length === 0)
+        throw new Error("Union must have at least one type");
+    return _a = class union extends ModelCoreUnion {
+            constructor() {
+                super(...args);
+                return this;
+            }
+        },
+        _a.unionTypes = args,
+        _a;
+}
+class ModelCoreUnion extends Array {
+}
+ModelCoreUnion.unionTypes = [];
 // ==================== HELPER FUNCTIONS ====================
 function isNone(that) { return that === undefined || that === null; }
 function parsePath(path) {
     const parts = [];
-    path.replace(/[^.[\]]+/g, (match) => {
+    path?.replace(/[^.[\]]+/g, (match) => {
         if (/^\d+$/.test(match))
             parts.push(Number(match));
         else
@@ -57,6 +74,13 @@ function parsePath(path) {
 }
 function buildError(errorType, message, source, path, expected, received, code) {
     return new errorType({ message, source, path, expected, received, code });
+}
+function normalizeConf(conf, path) {
+    if (typeof conf === "function")
+        return { type: conf };
+    if (conf && typeof conf === "object" && 'type' in conf)
+        return conf;
+    throw buildError(SchemaDefinitionError, `Invalid schema definition for '${path}'`, undefined, path, null, undefined, "SCHEMA_DEFINITION_ERROR");
 }
 // ==================== BASE CLASS ====================
 export default class Base {
@@ -107,22 +131,23 @@ export default class Base {
         for (const key in schema) {
             const conf = schema[key];
             let value = data[key];
-            if (!conf)
-                throw buildError(SchemaDefinitionError, `'${key}' has no schema. Either remove it from the schema definition or add a schema for it.`, ctor.name, key, null, data[key], "SCHEMA_DEFINITION_ERROR");
             this.runValidate(conf, value, key, isNew, this, key);
         }
     }
     runValidate(confPassed, valuePassed, path, isNew, container = this, propertyName) {
         const { conf, value } = this.validateType(confPassed, valuePassed, path);
         let toReturn;
-        if (conf.type === Array || conf.type.prototype instanceof Array) {
+        const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
+        if (conf.type === Array ||
+            (unionTypes && unionTypes.some((t) => t === Array || t.prototype instanceof Array))
+            || conf.type.prototype instanceof Array) {
             if (!conf.values)
                 throw buildError(SchemaDefinitionError, `Missing array value configuration at ${path}`, this.runValidate, path, null, value, "SCHEMA_DEFINITION_ERROR");
-            toReturn = new conf.type(); // This typing allows us to define non-writable index properties while still maintaining the correct item type for editor hovers and validation
+            toReturn = new conf.type();
             // define non-writable indexed properties to prevent direct overwrites
             for (let i = 0; i < value.length; i++) {
                 const validated = this.runValidate(conf.values, value[i], `${path}[${i}]`, isNew);
-                Object.defineProperty(toReturn, `${i}`, {
+                Object.defineProperty(toReturn, i, {
                     value: validated,
                     writable: false,
                     enumerable: true,
@@ -133,16 +158,10 @@ export default class Base {
             const vd = this;
             Object.defineProperty(toReturn, 'push', {
                 value: function (...items) {
-                    const curr = Array.prototype.slice.call(this);
-                    const validatedItems = items.map((item, i) => vd.runValidate(conf.values, item, `${path}[${curr.length + i}]`, false));
-                    const result = curr.concat(validatedItems);
-                    // rebuild index properties
-                    for (let i = 0; i < this.length; i++)
-                        delete this[i];
-                    for (let i = 0; i < result.length; i++)
-                        Object.defineProperty(this, `${i}`, { value: result[i], writable: false, enumerable: true, configurable: true });
-                    this.length = result.length;
-                    return this.length;
+                    const validatedItems = items.map((item, i) => vd.runValidate(conf.values, item, `${path}[${this.length + i}]`, false));
+                    for (let i = 0; i < validatedItems.length; i++)
+                        Object.defineProperty(this, this.length + i, { value: validatedItems[i], writable: false, enumerable: true, configurable: true });
+                    return this.length += validatedItems.length;
                 },
                 enumerable: false
             });
@@ -154,15 +173,14 @@ export default class Base {
             });
             Object.defineProperty(toReturn, 'unshift', {
                 value: function (...items) {
-                    const curr = Array.prototype.slice.call(this);
                     const validatedItems = items.map((item, i) => vd.runValidate(conf.values, item, `${path}[${i}]`, false));
-                    const result = validatedItems.concat(curr);
-                    for (let i = 0; i < this.length; i++)
-                        delete this[i];
-                    for (let i = 0; i < result.length; i++)
-                        Object.defineProperty(this, `${i}`, { value: result[i], writable: false, enumerable: true, configurable: true });
-                    this.length = result.length;
-                    return this.length;
+                    for (let i = this.length - 1; i >= 0; i--) {
+                        const currVal = this[i];
+                        Object.defineProperty(this, i + validatedItems.length, { value: currVal, writable: false, enumerable: true, configurable: true });
+                    }
+                    for (let i = 0; i < validatedItems.length; i++)
+                        Object.defineProperty(this, i, { value: validatedItems[i], writable: false, enumerable: true, configurable: true });
+                    return this.length += validatedItems.length;
                 },
                 enumerable: false
             });
@@ -178,7 +196,7 @@ export default class Base {
                     for (let i = 0; i < this.length; i++)
                         delete this[i];
                     for (let i = 0; i < result.length; i++)
-                        Object.defineProperty(this, `${i}`, { value: result[i], writable: false, enumerable: true, configurable: true });
+                        Object.defineProperty(this, i, { value: result[i], writable: false, enumerable: true, configurable: true });
                     this.length = result.length;
                     return deleted;
                 },
@@ -199,7 +217,9 @@ export default class Base {
                 enumerable: false
             });
         }
-        else if (conf.type === Object && conf.keys) {
+        else if (conf.type === Object || (unionTypes && unionTypes.some((t) => t === Object))) {
+            if (!conf.keys && !conf.properties)
+                throw buildError(SchemaDefinitionError, `Object properties schema definition missing for '${path}'`, this.runValidate, path, value.constructor, conf, 'SCHEMA_DEFINITION_ERROR');
             const obj = {};
             for (const childKey in conf.keys)
                 this.runValidate(conf.keys[childKey], value[childKey], `${path}.${childKey}`, isNew, obj, childKey);
@@ -207,14 +227,15 @@ export default class Base {
         }
         else
             toReturn = value;
-        const p = path.match(/[^.[\]]+/g)?.reduce((o, key) => o?.[key], this);
-        if (conf.immutable && !isNone(p) && p !== toReturn)
-            throw buildError(ImmutablePropertyError, `Cannot update immutable property '${path}'`, this.constructor.name, path, null, value, "IMMUTABLE_PROPERTY_UPDATE");
-        if (typeof conf.validate === "function")
+        if (conf.immutable && !isNew) {
+            const p = path.match(/[^.[\]]+/g)?.reduce((o, key) => o?.[key], this);
+            if (!isNone(p) && p !== toReturn)
+                throw buildError(ImmutablePropertyError, `Cannot update immutable property '${path}'`, this.constructor.name, path, null, value, "IMMUTABLE_PROPERTY_UPDATE");
+        }
+        if (conf.validate && typeof conf.validate === "function")
             conf.validate(toReturn);
         if (propertyName !== undefined) {
             let currentValue = toReturn;
-            delete container[propertyName];
             Object.defineProperty(container, propertyName, {
                 get: () => currentValue,
                 set: (newVal) => {
@@ -229,7 +250,9 @@ export default class Base {
         }
         return toReturn;
     }
-    validateType(conf, value, path) {
+    validateType(cnf, value, path) {
+        const conf = normalizeConf(cnf, path);
+        const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
         if (conf.beforeChecks && typeof conf.beforeChecks === "function") {
             const newVal = conf.beforeChecks(value);
             if (!isNone(newVal) || conf.optional)
@@ -245,11 +268,29 @@ export default class Base {
                     throw buildError(RequiredError, `Missing required property at '${path}'`, this.validateType, path, null, value, "REQUIRED_PROPERTY_MISSING");
             }
         }
-        if (value.constructor !== conf.type) {
+        const isOfType = () => {
+            return value.constructor === conf.type || (unionTypes && unionTypes.some((t) => value.constructor === t));
+        };
+        if (!isOfType()) {
             // Attempt to coerce the value to the correct type if possible. Valuable for date strings from a json for example
             if (conf.coerce)
-                value = new conf.type(value);
-            if (value.constructor !== conf.type || isNaN(value))
+                value = !unionTypes ? new conf.type(value) : (() => {
+                    // dangerous but necessary! Javascript will most probably coerce in an invalid away 
+                    // like new Array({}) = [{}] instead of throwing so we can check the next type.
+                    // We have to accept the language's downsides here. 
+                    // Avoid coercion on Unions unless you're sure about the input, as it can lead to unexpected results.
+                    // You can instead use beforeChecks() hook to preprocess the value for safety and control.
+                    for (const t of unionTypes) {
+                        try {
+                            const coerced = new t(value);
+                            if (coerced.constructor === t)
+                                return coerced;
+                        }
+                        catch { }
+                    }
+                    return value;
+                })();
+            if (!isOfType() || isNaN(value))
                 throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, null, value, "INVALID_TYPE");
         }
         if ((conf.max !== undefined) && (value.length ? value.length > conf.max : value > conf.max))

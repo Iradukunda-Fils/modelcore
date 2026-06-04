@@ -1,4 +1,4 @@
-import Base, { SchemaDefinition } from "../base.ts";
+import Base, { SchemaDefinition, Union } from "../base.ts";
 
 class Email extends String {
   /**
@@ -21,16 +21,20 @@ class User extends Base {
   static version = 1;
   static immutable = false;
 
+  /**
+   * A field is considered optional if it has `optional: true`, `required: false`, or a default value, otherwise it's required.
+   */
   static schema = {
     joinedOn: { type: Date, default: () => new Date(), optional: true },
     name: {
       type: String,
       max: 80,
       min: 5,
-      optional: true,
+      required: true,
       beforeChecks: (value: any) => typeof value === "string" ? value.trim() : value,
       afterChecks: (value: any) => value.replace(/\s+/g, " ")
     },
+    nickname: String, // Shorthand syntax also works, it's equivalent to `nickname: { type: String }`. Best if you're coming from a Mongoose background and want to keep using that style for simple fields.
     channel: {
       type: Object,
       keys: {
@@ -72,8 +76,8 @@ class User extends Base {
       values: {
         type: Object,
         keys: {
-          make: { type: String, max: 20, min: 2 },
-          model: { type: String, max: 20, min: 2 },
+          make: String,
+          model: String,
           year: { type: Number, optional: true },
           plate_number: { type: String, max: 20, min: 3 },
           color: {
@@ -87,7 +91,8 @@ class User extends Base {
           img_url: { type: String, max: 200, min: 5, optional: true }
         }
       }
-    }
+    },
+    f: Union(String, Number)
   } as const satisfies SchemaDefinition;
 }
 
@@ -95,6 +100,7 @@ class User extends Base {
 // If you don't care about type inference and type hints, you can also use the constructor directly: `new User(obj)`
 const user = User.createFrom({ 
   name: "   John    Doe   ",
+  nickname: "Johnny",
   channel: {
     name: "email",
     email: new Email("john@example.com"),
@@ -106,9 +112,21 @@ const user = User.createFrom({
   cars: [
     { make: "Toyota", model: "Camry", year: 2020, plate_number: "ABC123", color: "blue" },
     { make: "Honda", model: "Civic", plate_number: "XYZ789", color: "red" }
-  ]
+  ],
+  f: "This can be a string or a number"
 });
 
+user.cars![0].model = "Corolla"; // Works! Model is mutable.
+
+// Fails! Year is immutable.
+try { user.cars![0].year = 2021; } catch (error) { console.error(`Error updating user: ${(error as Error).message}`); }
+
+// Fails! Index 0 can not be manually overwritten. use unshift, push, splice etc to change the array instead.
+// Typescript will not even compile this file, as the assignment below is incompatible with type hints from modelcore.
+// try { user.cars![0] = "Not a car"; } catch (error) { console.error(`Error updating user: ${(error as Error).message}`); }
+
+user.cars!.push({ make: "Ford", model: "Mustang", year: 2019, plate_number: "MUS456", color: "black" });
+console.log("\nUpdated cars:");
 console.log(user.cars);
 
 /*
