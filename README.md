@@ -1,54 +1,41 @@
-# ModelCore - Runtime Entity Integrity for JavaScript and TypeScript
+# ModelCore
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/schema/ci.yml?branch=main)
-![Coverage](https://img.shields.io/badge/coverage-100%25-green)
-![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)
-![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)
+**Runtime entity integrity for JavaScript and TypeScript.**
 
-**Pydantic-inspired • Lightweight • Backend & Frontend friendly**
+[![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/modelcore/ci.yml?branch=main)](https://github.com/bufferpunk/modelcore) [![Coverage](https://img.shields.io/badge/coverage-100%25-green)](https://github.com/bufferpunk/modelcore) [![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)](https://npmjs.com/package/@bufferpunk/modelcore) [![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)](https://github.com/bufferpunk/modelcore/blob/main/LICENSE)
 
-A blazing fast, lightweight and Reactive Class-Based Object Modeling framework.
+---
 
-Build clean, safe, and delightful domain entities for TypeScript and JavaScript.
+Most validation libraries protect the boundary. They check data when it arrives, then step aside.
 
-`@bufferpunk/modelcore` is built around a `Base` class that validates plain objects using a static `schema` definition. It is useful when working with NoSQL data, API payloads, and nested objects that need runtime and compile-time guarantees and constraints.
+ModelCore does something different: **it stays**.
 
-## What It Does
+Once you define a schema, the rules travel with the object — through mutations, reassignments, nested updates, and transport. An invalid state can't sneak in after creation. Your entities mean what they say, always.
 
-When a model extends `Base` and defines a static `schema`, instance creation and updates will:
+> *Pydantic-inspired • Zero dependencies • Frontend & backend*
 
-- enforce required fields
-- apply defaults (primitive values or factory functions)
-- coerce values to the configured type when possible
-- validate nested objects and arrays recursively
-- validate allowed values with `enum`
-- run custom `beforeChecks` and `afterChecks` hooks if present
-- run custom `validate` hook for final validation if present
-- enforce immutability at class or field level
-- support typed unions with `Union(...)`
+---
 
-This package now also provides a typed factory pattern (`createFrom`) and improved TypeScript mappings so editors receive useful type information and inferred instance types when schemas are declared with `as const`.
+## Why this gap exists
 
-## Comparison to Other Libraries
+You probably already use Zod, Joi, or Yup. They're great at what they do: validate a plain object at a boundary, then hand it off. But once the object leaves the validator, the rules are gone. The object can drift. It can become invalid silently.
 
-- **Zod / Joi / Yup**: These are schema validation libraries that focus on validating plain objects. They do not provide a class-based model with runtime immutability or automatic coercion. You would need to manually validate and then assign values to a class instance.
-- **TypeORM / Sequelize**: These are ORM libraries that provide class-based models but are tightly coupled to databases and do not focus on runtime validation or immutability outside of the context of database operations.
-- **MobX / Vue Reactivity**: These libraries provide reactivity and state management but do not enforce validation rules or immutability at the runtime level. They track changes but do not govern them.
+TypeORM and Sequelize give you class-based models, but they're coupled to databases. MobX and Vue reactivity track *what* changed — but not *whether that change should have happened*.
 
-**ModelCore** fills the gap by providing a class-based modeling system that enforces validation and immutability rules at runtime and compile-time, making it suitable for both frontend and backend applications where data integrity is crucial.
+ModelCore fills the gap none of them cover:
 
-**Here is a simple comparison with other libraries**
+| Feature | ModelCore | Zod / Joi / Yup | TypeORM / Sequelize | MobX / Vue |
+|---|---|---|---|---|
+| Class-based models | ✅ | ❌ | ✅ | ❌ |
+| Runtime validation | ✅ | ✅ | Limited | ❌ |
+| Continuous enforcement | ✅ | ❌ | ❌ | ❌ |
+| Immutability enforcement | ✅ | ❌ | Limited | ❌ |
+| Automatic coercion | ✅ | Limited | ❌ | ❌ |
+| Nested object validation | ✅ | ✅ | Limited | ❌ |
+| Zero dependencies | ✅ | ❌ | ❌ | ❌ |
+| Frontend & backend | ✅ | ✅ | Backend only | Frontend only |
 
-| Feature                     | ModelCore                 | Zod / Joi / Yup           | TypeORM / Sequelize       | MobX / Vue Reactivity    |
-|-----------------------------|---------------------------|---------------------------|---------------------------|--------------------------|
-| Class-based models          | ✅                        | ❌                        | ✅                         | ❌                         |
-| Runtime validation          | ✅                        | ✅                        | Limited (database-focused) | ❌                         |
-| Reactivity                  | ✅                        | ❌                        | ❌                         | ✅                         |
-| Immutability enforcement    | ✅                        | ❌                        | Limited (database-focused) | ❌                         |
-| Automatic coercion          | ✅                        | Limited (Zod has some coercion) | ❌                         | ❌                         |
-| Nested object validation    | ✅                        | ✅                        | Limited (database-focused) | ❌                         |
-| TypeScript support          | ✅                        | ✅                        | ✅                         | ✅                         |
-| Frontend & Backend friendly | ✅                        | ✅                        | Backend-focused            | Frontend-focused           |
+---
 
 ## Installation
 
@@ -56,273 +43,200 @@ This package now also provides a typed factory pattern (`createFrom`) and improv
 npm install @bufferpunk/modelcore
 ```
 
-## Quick Start (JavaScript)
+---
 
-```js
-import Base from "@bufferpunk/modelcore"; // in ESM environments
-// or const Base = require("@bufferpunk/modelcore").default; // in CommonJS environments
+## Quick start
 
-class User extends Base {
-  static version = 1;
-  static schema = {
-    name: {
-      type: String,
-      min: 2,
-      max: 80,
-      beforeChecks: (value) => typeof value === "string" ? value.trim() : value,
-      afterChecks: (value) => value.replace(/\s+/g, " ")
-    },
-    role: {
-      type: String,
-      enum: ["admin", "editor", "viewer"],
-      default: "viewer",
-      beforeChecks: (value) => typeof value === "string" ? value.toLowerCase() : value
-    },
-    confirmed: { type: Boolean, optional: true, default: false }
-  };
-}
-
-const user = new User({ name: "   John    Doe   ", role: "EDITOR" });
-console.log(user);
-```
-
-## Quick Start (TypeScript)
-
-```ts
+```typescript
 import Base, { SchemaDefinition } from '@bufferpunk/modelcore';
 
 class User extends Base {
-  static version = 1;
-
   static schema = {
     name: {
       type: String,
       min: 2,
       max: 80,
-      beforeChecks: (value: any) => typeof value === 'string' ? value.trim() : value,
-      afterChecks: (value: any) => value.replace(/\s+/g, ' ')
+      beforeChecks: (v: any) => typeof v === 'string' ? v.trim() : v,
+      afterChecks: (v: any) => v.replace(/\s+/g, ' ')
     },
-    language: {
+    role: {
       type: String,
-      enum: ['english', 'spanish', 'portuguese'],
-      default: 'english',
-      beforeChecks: (value: any) => typeof value === 'string' ? value.toLowerCase().trim() : value,
-      afterChecks: (value: any) => value.charAt(0).toUpperCase() + value.slice(1)
-    }
+      enum: ['admin', 'editor', 'viewer'],
+      default: 'viewer',
+      beforeChecks: (v: any) => typeof v === 'string' ? v.toLowerCase() : v
+    },
+    confirmed: { type: Boolean, optional: true, default: false }
   } as const satisfies SchemaDefinition;
 }
 
-const user = User.createFrom({ name: '   Ana   Silva   ' }); // creatFrom() is a factory function for better TypeScript type hints and inference
-console.log(user);
+const user = new User({ name: '   John    Doe   ', role: 'EDITOR' });
+// → { name: 'John Doe', role: 'editor', confirmed: false }
+
+user.role = 'SUPERUSER'; // throws — 'superuser' is not in enum
+user.name = '  Jane  ';  // coerced and trimmed automatically
 ```
 
-## Custom Types / Classes
-You can use custom classes as field types. The system will validate that the value is an instance of the class and run its constructor logic.
+For the best TypeScript experience, use `createFrom()` — it infers the instance shape from the schema without any duplication:
 
-```ts
-import Base, { SchemaDefinition } from "@bufferpunk/modelcore";
+```typescript
+const user = User.createFrom({ name: 'Ana Silva', role: 'admin' });
+```
 
-class Email {
-  constructor(public value: string) {
-    if (typeof value !== "string" || !/^\S+@\S+\.\S+$/.test(value)) {
-      throw new Error("Invalid email format");
-    }
-  }
+---
+
+## What happens on every assignment
+
+Validation runs in a deterministic order, every time — at creation and on every mutation:
+
+1. `beforeChecks` — sanitize/transform raw input
+2. Required / optional / default resolution
+3. Type validation and coercion
+4. `min` / `max` constraints
+5. `enum` check
+6. `afterChecks` — post-type transformation
+7. Custom `validate` hook
+8. Immutability check
+
+Nothing is assumed safe after creation.
+
+---
+
+## Immutability
+
+Mark a class or individual fields as immutable and ModelCore will enforce it at runtime — not just in TypeScript types.
+
+```typescript
+class Order extends Base {
+  static immutable = true; // entire class is frozen after creation
+
+  static schema = {
+    id:     { type: String, immutable: true }, // or field-level
+    total:  { type: Number }
+  } as const satisfies SchemaDefinition;
 }
 
-const userSchema = {
-  id: Number,
-  email: Email,
-  name: String,
-  tags: { type: Array, values: String } // all values of this array will be strings
-} as const satisfies SchemaDefinition;
-
-class User extends Base {}
-User.schema = userSchema;
-
-// typed factory; the types are inferred from the schema
-const u = User.createFrom({ id: 1, email: new Email("a@b.com"), name: "A", tags: ["x"] });
-
-u.email = new Email("b@c.com"); // typescript and ModelCore will enforce that this is an Email instance
+const order = new Order({ id: 'ord_123', total: 49.99 });
+order.total = 99.99; // throws
 ```
 
-## Union Types
+---
 
-Use `Union(...)` to define a field that accepts multiple constructor types while preserving TypeScript inference.
+## Nested objects and arrays
 
-```ts
-import Base, { SchemaDefinition, Union } from "@bufferpunk/modelcore";
-
-class User extends Base {
+```typescript
+class Post extends Base {
   static schema = {
-    identifier: Union(String, Number),
-    contact: {
+    title: { type: String, min: 1, max: 200 },
+    tags:  { type: Array, values: String },
+    author: {
       type: Object,
-      keys: { // you can also use `properties`
-        email: String,
-        phone: { type: String, optional: true }
+      keys: {
+        name:  String,
+        email: String
       }
     }
   } as const satisfies SchemaDefinition;
 }
-
-const user = User.createFrom({ identifier: "123", contact: { email: "a@b.com" } });
 ```
 
-`Union` can also combine custom classes and primitives:
+Nested structures are validated recursively. The same rules apply at every level.
 
-```ts
-class Email extends String {
-  constructor(value: string) {
-    super(value);
+---
+
+## Custom types
+
+Any class can be a field type. ModelCore will validate that the value is an instance and run its constructor logic.
+
+```typescript
+class Email {
+  constructor(public value: string) {
+    if (!/^\S+@\S+\.\S+$/.test(value)) throw new Error('Invalid email');
   }
 }
 
 class User extends Base {
   static schema = {
-    contact: Union(String, Email)
+    email: Email,
+    name:  String
   } as const satisfies SchemaDefinition;
 }
 ```
 
-## Field Configuration
+---
 
-Each field in a schema can include:
+## Union types
 
-- `type` (required): constructor such as `String`, `Number`, `Boolean`, `Date`, `Array`, `Object` or custom classes and types. Nested object and array schemas can also use shorthand constructors directly inside `keys` and `values`.
-- `optional`: allows missing value
-- `required`: alias for `optional: false` (can be used for clearer schema intent)
-- `default`: fallback value when input is `null` or `undefined` (function values are executed)
-- `enum`: list of allowed values
-- `min`, `max`: length constraints for values with a `length` property
-- `immutable`: prevent this field from being changed after creation
-- `beforeChecks(value)`: transforms/sanitizes raw input before required/type checks
-- `afterChecks(value)`: transforms value after type/length/enum checks and before validation
-- `validate(value)`: custom final validation logic
-- `values`: required for `Array` types to validate each array item
-- `keys` / `properties`: required for `Object` types to validate nested properties
+```typescript
+import Base, { SchemaDefinition, Union } from '@bufferpunk/modelcore';
 
-The `type` property is the only required configuration for a field. All other properties are optional and can be used as needed to enforce constraints and transformations.
-
-## Validation Order
-
-For each field, validation runs in this order:
-
-1. `beforeChecks`
-2. required/optional and default handling
-3. type validation/coercion
-4. `min` / `max`
-5. `enum`
-6. `afterChecks`
-7. custom `validate`
-8. immutability check
-
-## Immutability
-
-Mark classes or individual fields as immutable to prevent modifications.
-
-```ts
-class ImmutableUser extends Base {
-  static immutable = true;
-  static schema: SchemaDefinition = {
-    id: { type: String, immutable: true },
-    name: { type: String }
-  };
+class User extends Base {
+  static schema = {
+    identifier: Union(String, Number),
+  } as const satisfies SchemaDefinition;
 }
 ```
 
-## Updating Instances
+`Union` works with custom classes and primitives alike.
 
-Use regular property access (recommended) to modify instance properties or the `update()` method (best if you want to update the whole object).
-The constructor automatically includes the `version` if defined on the class.
+---
 
-```ts
-const user = new User({ name: 'John', role: 'user' });
-user.name = 'Jane'; // (easiest and recommended for simple property changes)
-user.update({ name: 'Jane', role: 'admin' });
+## Updating instances
+
+```typescript
+const user = new User({ name: 'John', role: 'editor' });
+
+user.name = 'Jane';                        // direct assignment, validated
+user.update({ name: 'Jane', role: 'admin' }); // batch update
 ```
 
-## Factory and TypeScript ergonomics
+---
 
-Prefer defining schemas with `as const` and using the `createFrom` factory to get type inference for instance shapes without duplicating declarations.
+## Performance
 
-```ts
-const userSchema = {
-  id: Number,
-  email: String,
-  name: String
-} as const satisfies SchemaDefinition;
+ModelCore is fast enough for hot paths. On 100k iterations:
 
-class User extends Base {}
-User.schema = userSchema
+| Operation | Ops/sec |
+|---|---|
+| `construct + validate` | ~85,800 |
+| `createFrom` factory | ~92,600 |
+| `construct + validate + update` | ~46,700 |
+| `construct + validate + array mutations` | ~48,100 |
 
-const instance = User.createFrom({ id: 1, email: 'a@b.com', name: 'A' })
+Run the included benchmark yourself:
+
+```bash
+npm run bench
+# or: BENCH_ITERATIONS=100000 npm run bench
 ```
 
-## Nested Objects and Arrays
+---
 
-Use `keys` for objects and `values` for arrays. See the examples for full patterns.
+## Design philosophy
 
-## Included Files
+ModelCore is intentionally small. No runtime dependencies. No framework coupling. No database opinions.
 
-- `base.ts` / `base.js` / `base.d.ts`: base validator implementation
-- `examples/*`: runnable examples demonstrating inheritance, factory usage, and custom types
-- `test/*`: test suite covering all behaviors
+The schema is the single source of truth. Rules don't stop applying after creation — they travel with the object for as long as it exists.
 
-## Migration from @bufferpunk/schema
+For the full thinking behind this: [manifesto.md](./manifesto.md)
 
-See [CHANGELOG.md](CHANGELOG.md) for breaking changes and migration steps.
+---
 
-## Testing & CI
-
-Run tests with Node's test runner:
+## Testing
 
 ```bash
 npm run build
 npm test
 ```
 
-The repository includes a GitHub Actions workflow to run build and test on Node LTS.
+100% coverage. CI runs on Node LTS.
 
-## Benchmarking
+---
 
-Use the included micro-benchmark to compare construction, factory creation, updates, and mutation paths:
+## Migration from `@bufferpunk/schema`
 
-```bash
-npm run bench
-```
+See [CHANGELOG.md](./CHANGELOG.md).
 
-You can adjust iteration count with `BENCH_ITERATIONS`:
-
-```bash
-BENCH_ITERATIONS=100000 npm run bench
-```
-
-Example result on this repository, run with `BENCH_ITERATIONS=100000`:
-
-| (index) | Benchmark                                        | Time (ms) | Ops/sec |
-|---------|--------------------------------------------------|-----------|---------|
-| 0       | `construct + validate`                           |    1166   |  85781  |
-| 1       | `createFrom factory`                             |    1080   |  92620  |
-| 2       | `construct + validate + update validated fields` |    2140   |  46729  |
-| 3       | `construct + validate + array mutations`         |    2080   |  48088  |
-
-The benchmark is intentionally small and repeatable. It is useful for comparing changes between commits, not for replacing a full profiler or load test.
-
-## Why Runtime Entities Matter
-
-See the manifesto for the project's goals and positioning: [manifesto.md](manifesto.md)
-
-## Notes
-
-This package is intentionally small and framework-agnostic. It gives you runtime schema safety, immutability constraints, and field-level validation without requiring an ORM or heavyweight validation framework.
-
-## Contributing & Design Notes
-
-- Keep schemas as the single source of truth. Prefer `createFrom` for type inference and one-source-of-truth behavior.
-- This library is intentionally small and framework-agnostic: no runtime dependencies and minimal conceptual overhead.
-- For TypeScript ergonomics, prefer `as const` and named type aliases when you need concise editor hovers.
-- See the manifesto for the project's goals and positioning: [manifesto.md](manifesto.md)
+---
 
 ## License
 
