@@ -300,14 +300,12 @@ BENCH_ITERATIONS=100000 npm run bench
 
 Example result on this repository, run with `BENCH_ITERATIONS=100000`:
 
-
-│ (index) │ Benchmark                                        │ Time (ms) │ Ops/sec |
+| (index) | Benchmark                                        | Time (ms) | Ops/sec |
 |---------|--------------------------------------------------|-----------|---------|
-│ 0       │ 'construct + validate'                           │ 1166      │ 85781   |
-│ 1       │ 'createFrom factory'                             │ 1080      │ 92620   |
-│ 2       │ 'construct + validate + update validated fields' │ 2661      │ 46729   |
-│ 3       │ 'construct + validate + array mutations'         │ 2845      │ 48088   |
-
+| 0       | `construct + validate`                           |    1166   |  85781  |
+| 1       | `createFrom factory`                             |    1080   |  92620  |
+| 2       | `construct + validate + update validated fields` |    2140   |  46729  |
+| 3       | `construct + validate + array mutations`         |    2080   |  48088  |
 
 The benchmark is intentionally small and repeatable. It is useful for comparing changes between commits, not for replacing a full profiler or load test.
 
