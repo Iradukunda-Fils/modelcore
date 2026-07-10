@@ -71,7 +71,7 @@ const user = new User({
   email: new Email('alice@example.com')
 });
 
-bench('batch update validated fields', (i) => {
+bench('bulk update validated fields', (i) => {
   user.update({ id: i, name: '  Bob  ', tags: [' x ', ' y '] });
 });
 
