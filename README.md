@@ -2,7 +2,7 @@
 
 **Runtime entity integrity for JavaScript and TypeScript.**
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/modelcore/ci.yml?branch=main)](https://github.com/bufferpunk/modelcore) [![Coverage](https://img.shields.io/badge/coverage-100%25-green)](https://github.com/bufferpunk/modelcore) [![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)](https://npmjs.com/package/@bufferpunk/modelcore) [![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)](https://github.com/bufferpunk/modelcore/blob/main/LICENSE)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/modelcore/ci.yml?branch=main)](https://github.com/bufferpunk/modelcore) [![Coverage](https://img.shields.io/badge/coverage-96%25-green)](https://github.com/bufferpunk/modelcore) [![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)](https://npmjs.com/package/@bufferpunk/modelcore) [![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)](https://github.com/bufferpunk/modelcore/blob/main/LICENSE)
 
 ---
 
@@ -35,7 +35,6 @@ ModelCore fills the gap none of them cover:
 | Zero dependencies | ✅ | ❌ | ❌ | ❌ |
 | Frontend & backend | ✅ | ✅ | Backend only | Frontend only |
 
----
 
 ## Installation
 
@@ -76,28 +75,58 @@ user.role = 'SUPERUSER'; // throws — 'superuser' is not in enum
 user.name = '  Jane  ';  // coerced and trimmed automatically
 ```
 
-For the best TypeScript experience, use `createFrom()` — it infers the instance shape from the schema without any duplication:
+For the best TypeScript experience, use `Model.create()` or `Model.createFrom()` — it infers the instance shape from the schema without any duplication:
 
 ```typescript
 const user = User.createFrom({ name: 'Ana Silva', role: 'admin' });
+// or 
+const user = User.create({ name: 'Ana Silva', role: 'admin' });
 ```
 
 ---
 
-## What happens on every assignment
+## Validation pipeline
 
-Validation runs in a deterministic order, every time — at creation and on every mutation:
+Every assignment and construction runs through this exact sequence:
 
-1. `beforeChecks` — sanitize/transform raw input
-2. Required / optional / default resolution
-3. Type validation and coercion
-4. `min` / `max` constraints
-5. `enum` check
-6. `afterChecks` — post-type transformation
-7. Custom `validate` hook
-8. Immutability check
+1. **`beforeChecks`** — sanitize/transform raw input (trim, lowercase, etc.)
+2. **Required / optional / default resolution** — missing required fields throw; optional fields resolve to `undefined`; defaults are applied
+3. **Type validation and coercion** — checks `value.constructor === conf.type`; optional `coerce: true` calls the constructor
+4. **`min` / `max` constraints** — applies to `String.length` or numeric value
+5. **`enum` check** — value must be in the allowed set
+6. **`afterChecks`** — post-type transformation
+7. **Custom `validate` hook** — arbitrary validation logic (throw to reject)
+8. **Immutability check** — if the field or class is immutable, reject the mutation
 
-Nothing is assumed safe after creation.
+---
+
+## Schema reference
+
+### `FieldConfig`
+
+```typescript
+interface FieldConfig {
+  type: Function;                    // Constructor: String, Number, Boolean, Date, Array, Object, or custom class
+  immutable?: boolean;               // Reject writes after construction
+  optional?: boolean;                // Allow undefined
+  required?: boolean;                // Alias for optional: false
+  default?: any | (() => any);       // Default value (function = factory)
+  enum?: any[];                      // Allowed values
+  min?: number;                      // Min length (String) or min value (Number)
+  max?: number;                      // Max length (String) or max value (Number)
+  beforeChecks?: (value: any) => any; // Pre-validation transform
+  afterChecks?: (value: any) => any;  // Post-validation transform
+  validate?: (value: any) => void;    // Custom validation hook
+  keys?: Record<string, FieldConfig | Function>; // Nested object schema
+  properties?: Record<string, FieldConfig | Function>; // Alias for keys
+  values?: FieldConfig | Function;    // Array item schema
+  coerce?: boolean;                   // Auto-coerce via constructor
+}
+```
+
+### Shorthand syntax
+
+Any field value that is a constructor function (e.g., `String`, `Email`) is normalized to `{ type: thatFunction }`. So `name: String` is equivalent to `name: { type: String }`.
 
 ---
 
@@ -110,14 +139,16 @@ class Order extends Base {
   static immutable = true; // entire class is frozen after creation
 
   static schema = {
-    id:     { type: String, immutable: true }, // or field-level
+    id:     { type: String, immutable: true },
     total:  { type: Number }
   } as const satisfies SchemaDefinition;
 }
 
 const order = new Order({ id: 'ord_123', total: 49.99 });
-order.total = 99.99; // throws
+order.total = 99.99; // throws ImmutableObjectError
 ```
+
+Immutable fields lock their first value at construction. Immutable classes block all direct assignment and `.update()` calls after construction.
 
 ---
 
@@ -127,30 +158,41 @@ order.total = 99.99; // throws
 class Post extends Base {
   static schema = {
     title: { type: String, min: 1, max: 200 },
-    tags:  { type: Array, values: String },
+    tags:  { type: Array, values: { type: String, beforeChecks: v => v.trim() } },
     author: {
       type: Object,
       keys: {
         name:  String,
-        email: String
+        email: { type: String, validate: v => { if (!v.includes('@')) throw Error('bad email'); } }
       }
     }
   } as const satisfies SchemaDefinition;
 }
+
+const post = new Post({
+  title: 'Hello',
+  tags: ['  one  ', '  two  '],   // items are trimmed
+  author: { name: 'Alice', email: 'a@b.com' }
+});
+
+post.tags.push('  three  ');  // validated and trimmed
+post.author.name = 'Bob';      // validated via nested proxy
 ```
 
-Nested structures are validated recursively. The same rules apply at every level.
+Nested structures are wrapped in handlers that enforce the same rules. Array mutations (`push`, `unshift`, `splice`, `concat`, index assignment) are all validated. `fill()` is forbidden to prevent bulk silent corruption.
 
 ---
 
 ## Custom types
 
-Any class can be a field type. ModelCore will validate that the value is an instance and run its constructor logic.
+Any class can be a field type. ModelCore validates that the value is an instance of the class and runs its constructor logic during coercion.
 
 ```typescript
 class Email {
-  constructor(public value: string) {
+  value: string;
+  constructor(value: string) {
     if (!/^\S+@\S+\.\S+$/.test(value)) throw new Error('Invalid email');
+    this.value = value;
   }
 }
 
@@ -160,6 +202,9 @@ class User extends Base {
     name:  String
   } as const satisfies SchemaDefinition;
 }
+
+const user = new User({ email: 'alice@example.com', name: 'Alice' });
+// user.email is an Email instance, validated at construction
 ```
 
 ---
@@ -174,9 +219,13 @@ class User extends Base {
     identifier: Union(String, Number),
   } as const satisfies SchemaDefinition;
 }
+
+const a = new User({ identifier: 'abc' }); // OK
+const b = new User({ identifier: 42 });     // OK
+const c = new User({ identifier: true });   // throws — not String or Number
 ```
 
-`Union` works with custom classes and primitives alike.
+`Union` accepts any number of constructors (primitives or custom classes) and validates at runtime that the value matches one of them.
 
 ---
 
@@ -186,57 +235,108 @@ class User extends Base {
 const user = new User({ name: 'John', role: 'editor' });
 
 user.name = 'Jane';                        // direct assignment, validated
-user.update({ name: 'Jane', role: 'admin' }); // batch update
+user.update({ name: 'Jane', role: 'admin' }); // bulk update, validated
 ```
+
+`update()` performs a batch update — it iterates the schema and validates only the fields present in the data object. Fields not included in the update data are left untouched (no re-validation), making partial updates efficient.
+
+---
+
+## Construct / parse options
+
+Pass a second argument to the constructor or `update()` to control behavior:
+
+```typescript
+// Coerce string values into their typed counterparts
+class User extends Base {
+  static schema = {
+    name: String,
+    createdAt: { type: Date, coerce: true, required: false }, // pass it in the field config.
+  } as const satisfies SchemaDefinition;
+}
+
+// Silently swallow construction errors, marking fields with the error
+const user = new User({ name: { not: 'valid' } }, { safe: true });
+// user.name === Error (the caught error object)
+```
+
+---
+
+## Error system
+
+ModelCore throws typed error classes for every failure mode:
+
+| Error class | Trigger |
+|---|---|
+| `ValidationError` | Custom `validate` hook throws |
+| `TypeValidationError` | Value constructor doesn't match schema type |
+| `RequiredError` | Required field is missing |
+| `EnumValueError` | Value not in allowed enum set |
+| `RangeError` | Value exceeds min/max |
+| `ImmutableObjectError` | Write to immutable class |
+| `ImmutablePropertyError` | Write to immutable field |
+| `SchemaDefinitionError` | Malformed schema definition |
+| `MissingPropertyError` | Nested required property missing |
+| `ValueError` | Array method misuse (e.g., `fill()`) |
+
+All errors extend `ModelCoreError`, which carries `source`, `path`, `expected`, `received`, and `code` properties for programmatic handling.
 
 ---
 
 ## Performance
 
-ModelCore is fast enough for hot paths. On 100k iterations:
+ModelCore achieves **>300K ops/sec** across all operations on 100K iterations (Node 24):
 
 | Operation | Ops/sec |
 |---|---|
-| `construct + validate` | ~85,800 |
-| `createFrom` factory | ~92,600 |
-| `construct + validate + update` | ~46,700 |
-| `construct + validate + array mutations` | ~48,100 |
+| `construct + validate` (5 fields incl. nested) | ~383K |
+| `Model.create()` factory | ~383K |
+| `batch update validated fields` (partial 3/5 fields) | ~399K |
+
+This is enabled by:
+
+- **Skip-unchanged optimization** — `update()` only validates fields present in the incoming data. Unchanged fields are left as-is.
+- **Handler caching** — nested object and array proxy handlers are created once per instance per field path, then reused across subsequent updates.
+- **Zero Object.defineProperty calls** — property descriptors are only created once at construction. After that, all property access is via the proxy handler.
 
 Run the included benchmark yourself:
 
 ```bash
-npm run bench
-# or: BENCH_ITERATIONS=100000 npm run bench
+BENCH_ITERATIONS=100000 npm run bench
 ```
 
 ---
 
-## Design philosophy
+## API reference
 
-ModelCore is intentionally small. No runtime dependencies. No framework coupling. No database opinions.
+### `class Base`
 
-The schema is the single source of truth. Rules don't stop applying after creation — they travel with the object for as long as it exists.
+```typescript
+class Base {
+  static schema: SchemaDefinition;
+  static version?: number;
+  static immutable?: boolean;
 
-For the full thinking behind this: [manifesto.md](./manifesto.md)
+  constructor(obj: Record<string, any>, parseConfig?: parserConfig);
 
----
+  static createFrom<T>(obj, parseConfig?): SchemaToType<T['schema']>;
+  static create<T>(obj, parseConfig?): SchemaToType<T['schema']>;
 
-## Testing
-
-```bash
-npm run build
-npm test
+  update(obj: Record<string, any>, parseConfig?: parserConfig): void;
+  toObject(): Record<string, any>;
+  json(): string;
+}
 ```
 
-100% coverage. CI runs on Node LTS.
+| Method | Description |
+|---|---|
+| `new Base(data, opts?)` | Creates and validates instance. Returns a Proxy. |
+| `Base.createFrom(data, opts?)` | Factory — return type is inferred from schema. |
+| `Base.create(data, opts?)` | Alias for `createFrom`. |
+| `instance.update(data, opts?)` | Batch/Bulk-update validated fields. |
+| `instance.toObject()` | Returns a plain object with all current values. |
+| `instance.json()` | To make things easier for you |
 
----
-
-## Migration from `@bufferpunk/schema`
-
-See [CHANGELOG.md](./CHANGELOG.md).
-
----
 
 ## License
 

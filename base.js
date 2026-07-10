@@ -82,12 +82,175 @@ function normalizeConf(conf, path) {
         return conf;
     throw buildError(SchemaDefinitionError, `Invalid schema definition for '${path}'`, undefined, path, null, undefined, "SCHEMA_DEFINITION_ERROR");
 }
+// ==================== PROXY HANDLER ====================
+function createProxyHandler(ctor) {
+    const schema = ctor.schema;
+    const immutable = !!(ctor.immutable);
+    return {
+        get(target, key) {
+            if (typeof key === 'symbol')
+                return target[key];
+            if (key === '__safeSet__')
+                return (k, v) => { target[k] = v; }; // This naming is to avoid conflicts with user-defined properties. It's a private method for internal use. Call at your own risk.
+            return target[key];
+        },
+        set(target, key, value) {
+            if (typeof key === 'symbol') {
+                target[key] = value;
+                return true;
+            }
+            if (immutable)
+                throw buildError(ImmutableObjectError, `Cannot update immutable object of type ${ctor.name}`, ctor.name, "", null, value, "IMMUTABLE_CLASS_UPDATE");
+            if (typeof key === 'string' && schema && key in schema) {
+                const result = target.runValidate(schema[key], value, key, false);
+                target[key] = result;
+            }
+            else {
+                target[key] = value;
+            }
+            return true;
+        },
+        has(target, key) {
+            return key in target;
+        },
+        ownKeys(target) {
+            return Object.keys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+            return Object.getOwnPropertyDescriptor(target, key);
+        },
+        deleteProperty(target, key) {
+            if (key in target) {
+                delete target[key];
+                return true;
+            }
+            return Reflect.deleteProperty(target, key);
+        },
+    };
+}
+// ==================== ARRAY PROXY HANDLER ====================
+function createArrayHandler(vd, confValues, path) {
+    return {
+        get(target, key) {
+            if (key === 'push') {
+                return function (...items) {
+                    const t = target;
+                    const validatedItems = items.map((item, i) => vd.runValidate(confValues, item, `${path}[${t.length + i}]`, false));
+                    for (let i = 0; i < validatedItems.length; i++)
+                        t[t.length + i] = validatedItems[i];
+                    return t.length;
+                };
+            }
+            if (key === 'fill') {
+                return function () {
+                    throw buildError(ValueError, `Array.fill() is not allowed on validated arrays. Use Array.splice() instead for controlled modifications.`, vd.runValidate, path, null, undefined, "INVALID_ARRAY_METHOD");
+                };
+            }
+            if (key === 'unshift') {
+                return function (...items) {
+                    const t = target;
+                    const validatedItems = items.map((item, i) => vd.runValidate(confValues, item, `${path}[${i}]`, false));
+                    for (let i = t.length - 1; i >= 0; i--)
+                        t[i + validatedItems.length] = t[i];
+                    for (let i = 0; i < validatedItems.length; i++)
+                        t[i] = validatedItems[i];
+                    return t.length;
+                };
+            }
+            if (key === 'splice') {
+                return function (start, deleteCount, ...items) {
+                    const t = target;
+                    const curr = Array.prototype.slice.call(t);
+                    const len = curr.length;
+                    const s = start < 0 ? Math.max(len + start, 0) : Math.min(start || 0, len);
+                    const dc = deleteCount === undefined ? len - s : Math.max(0, Math.min(deleteCount, len - s));
+                    const validatedItems = items.map((item, i) => vd.runValidate(confValues, item, `${path}[${s + i}]`, false));
+                    const result = curr.slice(0, s).concat(validatedItems).concat(curr.slice(s + dc));
+                    const deleted = curr.slice(s, s + dc);
+                    for (let i = 0; i < t.length; i++)
+                        delete t[i];
+                    for (let i = 0; i < result.length; i++)
+                        t[i] = result[i];
+                    t.length = result.length;
+                    return deleted;
+                };
+            }
+            if (key === 'concat') {
+                return function (...arrays) {
+                    const t = target;
+                    const curr = Array.prototype.slice.call(t);
+                    let result = curr;
+                    for (const arr of arrays) {
+                        if (!Array.isArray(arr))
+                            throw buildError(ValueError, 'Can only concat arrays to validated array properties.', vd.runValidate, path, null, undefined, "INVALID_CONCAT_VALUE");
+                        const validatedItems = arr.map((item, i) => vd.runValidate(confValues, item, `${path}[${result.length + i}]`, false));
+                        result = result.concat(validatedItems);
+                    }
+                    return result;
+                };
+            }
+            return target[key];
+        },
+        set(target, key, value) {
+            if (typeof key === 'symbol') {
+                target[key] = value;
+                return true;
+            }
+            if (key === 'length') {
+                target.length = value;
+                return true;
+            }
+            const numKey = typeof key === 'string' ? Number(key) : NaN;
+            if (!isNaN(numKey) && key !== '') {
+                const validated = vd.runValidate(confValues, value, `${path}[${numKey}]`, false);
+                target[numKey] = validated;
+                return true;
+            }
+            target[key] = value;
+            return true;
+        },
+    };
+}
+/**
+ * TODO: Handle other types like Set, Map, etc.
+ *
+ */
+// ==================== OBJECT PROXY HANDLER ====================
+function createObjectHandler(vd, conf, path) {
+    const keys = conf.keys || conf.properties || {};
+    return {
+        get(target, key) {
+            if (typeof key === 'symbol')
+                return target[key];
+            return target[key];
+        },
+        set(target, key, value) {
+            if (typeof key === 'symbol') {
+                target[key] = value;
+                return true;
+            }
+            if (key in keys) {
+                const result = vd.runValidate(keys[key], value, `${path}.${key}`, false);
+                target[key] = result;
+                return true;
+            }
+            target[key] = value;
+            return true;
+        },
+    };
+}
 // ==================== BASE CLASS ====================
+const handlerCache = new WeakMap();
 export default class Base {
     constructor(obj, parseConfig) {
         this.update(obj, parseConfig, true);
+        const ctor = this.constructor;
+        return new Proxy(this, ctor.__proxyHandler || (ctor.__proxyHandler = createProxyHandler(ctor)));
     }
     static createFrom(obj, parseConfig) {
+        return new this(obj, parseConfig);
+    }
+    static create(obj, parseConfig) {
         return new this(obj, parseConfig);
     }
     update(obj, parseConfig, isNew = false) {
@@ -97,12 +260,10 @@ export default class Base {
                 throw TypeError("Input must be an object");
             this.setProperties(ctor.schema, obj, isNew);
             if (ctor.version)
-                this["version"] = ctor.version;
+                this.version = ctor.version;
         }
         catch (e) {
             for (const key in this) {
-                // This will make all properties of the object return the error when accessed,
-                // signaling that the object is in an invalid state due to failed validation
                 delete this[key];
                 Object.defineProperty(this, key, {
                     value: e,
@@ -126,128 +287,86 @@ export default class Base {
         const ctor = this.constructor;
         if (ctor.immutable && !isNew)
             throw buildError(ImmutableObjectError, `Cannot update immutable object of type ${ctor.name}`, ctor.name, "", null, data, "IMMUTABLE_CLASS_UPDATE");
-        if (!isNew)
-            data = { ...this, ...data };
         for (const key in schema) {
+            if (!isNew && !(key in data))
+                continue;
             const conf = schema[key];
-            let value = data[key];
-            this.runValidate(conf, value, key, isNew, this, key);
+            const value = data[key];
+            const result = this.runValidate(conf, value, key, isNew);
+            if (isNew)
+                this[key] = result;
+            else
+                this.__safeSet__(key, result);
         }
     }
-    runValidate(confPassed, valuePassed, path, isNew, container = this, propertyName) {
+    runValidate(confPassed, valuePassed, path, isNew) {
         const { conf, value } = this.validateType(confPassed, valuePassed, path);
         let toReturn;
         const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
         if (conf.type === Array ||
             (unionTypes && unionTypes.some((t) => t === Array || t.prototype instanceof Array))
-            || conf.type.prototype instanceof Array) {
+            || (!unionTypes && conf.type.prototype instanceof Array)) {
             if (!conf.values)
                 throw buildError(SchemaDefinitionError, `Missing array value configuration at ${path}`, this.runValidate, path, null, value, "SCHEMA_DEFINITION_ERROR");
             toReturn = new conf.type();
-            // define non-writable indexed properties to prevent direct overwrites
             for (let i = 0; i < value.length; i++) {
                 const validated = this.runValidate(conf.values, value[i], `${path}[${i}]`, isNew);
-                Object.defineProperty(toReturn, i, {
-                    value: validated,
-                    writable: false,
-                    enumerable: true,
-                    configurable: true,
-                });
+                toReturn[i] = validated;
             }
-            // Monkey-patch Array dangerous methods
-            const vd = this;
-            Object.defineProperty(toReturn, 'push', {
-                value: function (...items) {
-                    const validatedItems = items.map((item, i) => vd.runValidate(conf.values, item, `${path}[${this.length + i}]`, false));
-                    for (let i = 0; i < validatedItems.length; i++)
-                        Object.defineProperty(this, this.length + i, { value: validatedItems[i], writable: false, enumerable: true, configurable: true });
-                    return this.length += validatedItems.length;
-                },
-                enumerable: false
-            });
-            Object.defineProperty(toReturn, 'fill', {
-                value: function () {
-                    throw buildError(ValueError, `Array.fill() is not allowed on validated arrays. Use Array.splice() instead for controlled modifications.`, this.validateType, path, null, value, "INVALID_ARRAY_METHOD");
-                },
-                enumerable: false
-            });
-            Object.defineProperty(toReturn, 'unshift', {
-                value: function (...items) {
-                    const validatedItems = items.map((item, i) => vd.runValidate(conf.values, item, `${path}[${i}]`, false));
-                    for (let i = this.length - 1; i >= 0; i--) {
-                        const currVal = this[i];
-                        Object.defineProperty(this, i + validatedItems.length, { value: currVal, writable: false, enumerable: true, configurable: true });
-                    }
-                    for (let i = 0; i < validatedItems.length; i++)
-                        Object.defineProperty(this, i, { value: validatedItems[i], writable: false, enumerable: true, configurable: true });
-                    return this.length += validatedItems.length;
-                },
-                enumerable: false
-            });
-            Object.defineProperty(toReturn, 'splice', {
-                value: function (start, deleteCount, ...items) {
-                    const curr = Array.prototype.slice.call(this);
-                    const len = curr.length;
-                    const s = start < 0 ? Math.max(len + start, 0) : Math.min(start || 0, len);
-                    const dc = deleteCount === undefined ? len - s : Math.max(0, Math.min(deleteCount, len - s));
-                    const validatedItems = items.map((item, i) => vd.runValidate(conf.values, item, `${path}[${s + i}]`, false));
-                    const result = curr.slice(0, s).concat(validatedItems).concat(curr.slice(s + dc));
-                    const deleted = curr.slice(s, s + dc);
-                    for (let i = 0; i < this.length; i++)
-                        delete this[i];
-                    for (let i = 0; i < result.length; i++)
-                        Object.defineProperty(this, i, { value: result[i], writable: false, enumerable: true, configurable: true });
-                    this.length = result.length;
-                    return deleted;
-                },
-                enumerable: false
-            });
-            Object.defineProperty(toReturn, 'concat', {
-                value: function (...arrays) {
-                    const curr = Array.prototype.slice.call(this);
-                    let result = curr;
-                    for (const arr of arrays) {
-                        if (!Array.isArray(arr))
-                            throw buildError(ValueError, 'Can only concat arrays to validated array properties.', this.validateType, path, null, value, "INVALID_CONCAT_VALUE");
-                        const validatedItems = arr.map((item, i) => vd.runValidate(conf.values, item, `${path}[${result.length + i}]`, false));
-                        result = result.concat(validatedItems);
-                    }
-                    return result;
-                },
-                enumerable: false
-            });
+            let handler;
+            if (!isNew) {
+                let cache = handlerCache.get(this);
+                if (!cache) {
+                    cache = new Map();
+                    handlerCache.set(this, cache);
+                }
+                handler = cache.get(path);
+                if (!handler) {
+                    handler = createArrayHandler(this, conf.values, path);
+                    cache.set(path, handler);
+                }
+            }
+            else {
+                handler = createArrayHandler(this, conf.values, path);
+            }
+            toReturn = new Proxy(toReturn, handler);
         }
         else if (conf.type === Object || (unionTypes && unionTypes.some((t) => t === Object))) {
             if (!conf.keys && !conf.properties)
                 throw buildError(SchemaDefinitionError, `Object properties schema definition missing for '${path}'`, this.runValidate, path, value.constructor, conf, 'SCHEMA_DEFINITION_ERROR');
             const obj = {};
-            for (const childKey in conf.keys)
-                this.runValidate(conf.keys[childKey], value[childKey], `${path}.${childKey}`, isNew, obj, childKey);
-            toReturn = obj;
+            for (const childKey in conf.keys) {
+                const childVal = this.runValidate(conf.keys[childKey], value?.[childKey], `${path}.${childKey}`, isNew);
+                obj[childKey] = childVal;
+            }
+            let handler;
+            if (!isNew) {
+                let cache = handlerCache.get(this);
+                if (!cache) {
+                    cache = new Map();
+                    handlerCache.set(this, cache);
+                }
+                handler = cache.get(path);
+                if (!handler) {
+                    handler = createObjectHandler(this, conf, path);
+                    cache.set(path, handler);
+                }
+            }
+            else {
+                handler = createObjectHandler(this, conf, path);
+            }
+            toReturn = new Proxy(obj, handler);
         }
         else
             toReturn = value;
         if (conf.immutable && !isNew) {
-            const p = path.match(/[^.[\]]+/g)?.reduce((o, key) => o?.[key], this);
+            const startObj = this;
+            const p = path.match(/[^.[\]]+/g)?.reduce((o, key) => o?.[key], startObj);
             if (!isNone(p) && p !== toReturn)
                 throw buildError(ImmutablePropertyError, `Cannot update immutable property '${path}'`, this.constructor.name, path, null, value, "IMMUTABLE_PROPERTY_UPDATE");
         }
         if (conf.validate && typeof conf.validate === "function")
             conf.validate(toReturn);
-        if (propertyName !== undefined) {
-            let currentValue = toReturn;
-            Object.defineProperty(container, propertyName, {
-                get: () => currentValue,
-                set: (newVal) => {
-                    const ctor = this.constructor;
-                    if (ctor.immutable)
-                        throw buildError(ImmutableObjectError, `Cannot update immutable object of type ${ctor.name}`, ctor.name, path, null, value, "IMMUTABLE_PROPERTY_UPDATE");
-                    this.runValidate(conf, newVal, path, false, container, propertyName);
-                },
-                enumerable: true,
-                configurable: true,
-            });
-        }
         return toReturn;
     }
     validateType(cnf, value, path) {
@@ -269,26 +388,22 @@ export default class Base {
             }
         }
         const isOfType = () => {
-            return value.constructor === conf.type || (unionTypes && unionTypes.some((t) => value.constructor === t));
+            return (unionTypes && unionTypes.some((t) => value.constructor === t)) || value.constructor === conf.type;
         };
         if (!isOfType()) {
             // Attempt to coerce the value to the correct type if possible. Valuable for date strings from a json for example
             if (conf.coerce)
                 value = !unionTypes ? new conf.type(value) : (() => {
-                    // dangerous but necessary! Javascript will most probably coerce in an invalid away 
-                    // like new Array({}) = [{}] instead of throwing so we can check the next type.
+                    // dangerous but necessary! Javascript will most probably coerce in an invalid way 
+                    // like `new Array({}) = [{}]` instead of throwing so we can check the next type.
                     // We have to accept the language's downsides here. 
                     // Avoid coercion on Unions unless you're sure about the input, as it can lead to unexpected results.
                     // You can instead use beforeChecks() hook to preprocess the value for safety and control.
                     for (const t of unionTypes) {
-                        try {
-                            const coerced = new t(value);
-                            if (coerced.constructor === t)
-                                return coerced;
-                        }
-                        catch { }
+                        const coerced = new t(value);
+                        if (coerced.constructor === t)
+                            return coerced;
                     }
-                    return value;
                 })();
             if (!isOfType() || isNaN(value))
                 throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, null, value, "INVALID_TYPE");

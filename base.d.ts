@@ -25,6 +25,7 @@ export interface BaseConstructor {
     schema: SchemaDefinition;
     immutable?: boolean;
     version?: number;
+    __proxyHandler?: ProxyHandler<any>;
 }
 export interface errorObject {
     message: string;
@@ -116,11 +117,12 @@ export default class Base {
     [key: string]: any;
     constructor(obj: Record<string, any>, parseConfig?: parserConfig);
     static createFrom<T extends typeof Base>(this: T, obj: SchemaToType<T['schema']>, parseConfig?: parserConfig): SchemaToType<T['schema']>;
+    static create<T extends typeof Base>(this: T, obj: SchemaToType<T['schema']>, parseConfig?: parserConfig): SchemaToType<T['schema']>;
     update(obj: Record<string, any>, parseConfig?: parserConfig, isNew?: boolean): void;
     toObject(): Record<string, any>;
     json(): string;
     private setProperties;
-    private runValidate;
+    runValidate(confPassed: FieldConfig | Function, valuePassed: any, path: string, isNew: boolean): any;
     private validateType;
 }
 export {};

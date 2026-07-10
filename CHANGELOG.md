@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-07-10
+
+### Performance (3-4x improvement)
+
+- This version brings significant performance improvements to the core model construction and validation logic, as well as bulk updates.
+ This was achieved by eliminating the javascript Object.defineProperty() calls that slowed down execution.
+ **Benchmark results (100K iterations, Node 24)**:
+
+  | Operation | v1.2.0 | v1.3.0 |
+  |---|---|---|
+  | `construct + validate` | ~85K ops/sec | ~383K ops/sec |
+  | `Model.create()` factory method | ~92K ops/sec | ~383K ops/sec |
+  | `batch update` | ~46K ops/sec | ~399K ops/sec |
+
+
 ## [1.2.0] - 2026-06-04
 
 ### Added
