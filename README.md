@@ -2,7 +2,7 @@
 
 **Runtime entity integrity for JavaScript and TypeScript.**
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/modelcore/ci.yml?branch=main)](https://github.com/bufferpunk/modelcore) [![Coverage](https://img.shields.io/badge/coverage-96%25-green)](https://github.com/bufferpunk/modelcore) [![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)](https://npmjs.com/package/@bufferpunk/modelcore) [![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)](https://github.com/bufferpunk/modelcore/blob/main/LICENSE)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/modelcore/ci.yml?branch=main)](https://github.com/bufferpunk/modelcore) [![Coverage](https://img.shields.io/badge/coverage-97%25-green)](https://github.com/bufferpunk/modelcore) [![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)](https://npmjs.com/package/@bufferpunk/modelcore) [![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)](https://github.com/bufferpunk/modelcore/blob/main/LICENSE)
 
 ---
 
@@ -124,6 +124,7 @@ interface FieldConfig {
   properties?: Record<string, FieldConfig | Function>; // Alias for keys
   values?: FieldConfig | Function;    // Array item schema
   coerce?: boolean;                   // Auto-coerce via constructor
+  [key: string]: any;                 // Custom properties for validation handlers
 }
 ```
 
@@ -336,7 +337,7 @@ Pass a second argument to the constructor or `update()` to control behavior:
 class User extends Base {
   static schema = {
     name: String,
-    createdAt: { type: Date, coerce: true, required: false }, // pass it in the field config.
+    createdAt: { type: Date, coerce: true, required: false },
   } as const satisfies SchemaDefinition;
 }
 
@@ -344,6 +345,43 @@ class User extends Base {
 const user = new User({ name: { not: 'valid' } }, { safe: true });
 // user.name === Error (the caught error object)
 ```
+
+---
+
+## Autorequire (global required-field toggle)
+
+By default, ModelCore throws a `RequiredError` when a field's schema doesn't mark it as `optional` and the value is missing. You can relax this globally with `Base.autorequire`:
+
+```typescript
+// Default behavior — missing non-optional fields throw
+class User extends Base {
+  static schema = { name: { type: String } };
+}
+new User({}); // throws RequiredError
+
+// Disable autorequire — missing fields silently become undefined
+Base.autorequire = false;
+new User({}); // { name: undefined }
+
+// Re-enable
+Base.autorequire = true; // or delete Base.autorequire
+```
+
+### Precedence
+
+| Config | `autorequire` | Behavior |
+|---|---|---|
+| `optional: true` | any | Allowed, value stays `undefined` |
+| `required: false` | any | Allowed, value stays `undefined` |
+| `required: true` | any | **Always throws** — explicit override |
+| `optional: false` | any | **Always throws** — explicit override |
+| _(neither set)_ | `undefined` (default) | Throws `RequiredError` |
+| _(neither set)_ | `true` | Throws `RequiredError` |
+| _(neither set)_ | `false` | Silently allowed, value stays `undefined` |
+
+This is useful for gradual adoption — start with `autorequire = false` while you migrate schemas, then flip it on once all fields are properly annotated.
+
+This can also be used by ORMs, when you query the DB with maybe just an id field, and you want to allow the rest of the fields to be undefined until you fetch them.
 
 ---
 
@@ -397,6 +435,7 @@ class Base {
   static schema: SchemaDefinition;
   static version?: number;
   static immutable?: boolean;
+  static autorequire?: boolean;
   static validationHandlers?: Array<Function>;
 
   constructor(obj: Record<string, any>, parseConfig?: parserConfig);
@@ -413,9 +452,10 @@ class Base {
 
 | Method | Description |
 |---|---|
-| `new Base(data, opts?)` | Creates and validates instance. Returns a Proxy. |
+| `new Model(data, opts?)` | Creates and validates instance. Returns a Proxy. |
 | `Model.createFrom(data, opts?)` | Factory — return type is inferred from schema. |
 | `Model.create(data, opts?)` | Alias for `createFrom`. |
+| `Base.autorequire` | Global toggle: `false` allows missing non-optional fields silently (default: `undefined` = throw). |
 | `Base.addValidationHandler(handler)` | Register a middleware function `(conf, value, path) => void` run during every `validateType` call. |
 | `instance.update(data, opts?)` | Batch/Bulk-update validated fields. |
 | `instance.toObject()` | Returns a plain object with all current values. |

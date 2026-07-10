@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-07-10
+
+### Added
+
+- **`Base.autorequire` global toggle**: Control whether missing non-optional fields throw a `RequiredError`. Set `Base.autorequire = false` to silently allow missing fields — useful for gradual schema adoption. Explicit `required: true` / `optional: false` always take precedence over the global flag.
+- **Extended test coverage**: 13 new tests covering validation handler lifecycle (calls, rejection, ordering, args, nested, error metadata) and autorequire behavior (default, true, false, precedence, defaults).
+
 ## [1.4.0] - 2026-07-10
 
 ### Added
@@ -13,8 +20,9 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - `version` instance property removed from type declaration (was redundant — `ctor.version` handles versioning at the class level).
-- Updated README with validation handler documentation, `buildError` reference, and expanded API docs.
+- Updated README with validation handler documentation, `buildError` reference, autorequire toggle docs, and expanded API docs.
 - Updated `examples/user.ts` to demonstrate custom `regex` validation with a handler.
+- `base.js` synced with `base.ts` for `autorequire` and handler loop logic.
 
 ## [1.3.0] - 2026-07-10
 

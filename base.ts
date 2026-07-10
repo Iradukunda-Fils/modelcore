@@ -330,6 +330,7 @@ export default class Base {
   declare static version?: number;
   declare static immutable?: boolean;
   declare static validationHandlers: Array<Function>;
+  declare static autorequire?: boolean;
 
   [key: string]: any;
 
@@ -484,8 +485,12 @@ export default class Base {
     if (isNone(value)) {
       if (!isNone(conf.default)) value = typeof conf.default === 'function' ? conf.default() : conf.default;
       if (isNone(value)) {
-        if (conf.optional) return { conf, value };
-        if (!conf.optional) throw buildError(RequiredError, `Missing required property at '${path}'`, this.validateType, path, null, value, "REQUIRED_PROPERTY_MISSING");
+        if (conf.optional || conf.required === false) return { conf, value };
+        if (conf.required === true || conf.optional === false)
+          throw buildError(RequiredError, `Missing required property at '${path}'`, this.validateType, path, null, value, "REQUIRED_PROPERTY_MISSING");
+        if (Base.autorequire || Base.autorequire === undefined)
+          throw buildError(RequiredError, `Missing required property at '${path}'`, this.validateType, path, null, value, "REQUIRED_PROPERTY_MISSING");
+        return { conf, value };
       }
     }
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import Base, { Union } from "../base.ts";
+import Base, { Union, buildError, ValueError } from "../base.ts";
 
 /* Tests to verify core functionality. You can add more as needed. Send a PR to be included. */
 
@@ -285,7 +285,6 @@ test("default factories produce distinct values and are applied when missing", (
   const a = new Item({});
   const b = new Item({});
   assert.ok(a.createdAt instanceof Date && b.createdAt instanceof Date);
-  console.log(a.id, b.id);
   assert.notEqual(a.id, b.id);
 });
 
@@ -469,3 +468,209 @@ test("union functions as intended", () => {
   assert.doesNotThrow(() => new U({ name: "Alice", age: 1, height: "5.5" }))
   assert.deepEqual(new U({ name: "Alice", age: 1, height: "5.5" }).toObject(), { name: "Alice", tags: [], age: 1, height: new Number(5.5) })
 })
+
+// ==================== VALIDATION HANDLERS ====================
+
+test("validation handler is called during construction and receives correct args", () => {
+  const calls = [];
+  const cleanup = Base.validationHandlers;
+  Base.validationHandlers = [];
+  Base.addValidationHandler((conf, value, path) => { calls.push({ conf, value, path }); });
+
+  class U extends Base {
+    static schema = { name: { type: String }, age: { type: Number, optional: true } };
+  }
+  new U({ name: "Alice", age: 30 });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].conf.type, String);
+  assert.equal(calls[0].value, "Alice");
+  assert.equal(calls[0].path, "name");
+  assert.equal(calls[1].conf.type, Number);
+  assert.equal(calls[1].value, 30);
+  assert.equal(calls[1].path, "age");
+
+  Base.validationHandlers = cleanup;
+});
+
+test("validation handler can reject invalid values", () => {
+  const cleanup = Base.validationHandlers;
+  Base.validationHandlers = [];
+  Base.addValidationHandler((conf, value, path) => {
+    if (conf.regex && typeof value === "string" && !conf.regex.test(value))
+      throw buildError(ValueError, "regex mismatch", undefined, path, conf.regex, value, "REGEX");
+  });
+
+  class U extends Base {
+    static schema = { name: { type: String, regex: /^[a-z]+$/ } };
+  }
+
+  assert.doesNotThrow(() => new U({ name: "alice" }));
+  assert.throws(() => new U({ name: "Alice123" }), /regex mismatch/);
+  try { new U({ name: "Alice123" }); assert.fail("should throw"); }
+  catch (e) { assert.equal(e.code, "REGEX"); }
+
+  Base.validationHandlers = cleanup;
+});
+
+test("multiple handlers run in registration order", () => {
+  const order = [];
+  const cleanup = Base.validationHandlers;
+  Base.validationHandlers = [];
+  Base.addValidationHandler(() => { order.push("first"); });
+  Base.addValidationHandler(() => { order.push("second"); });
+  Base.addValidationHandler(() => { order.push("third"); });
+
+  class U extends Base { static schema = { name: { type: String } }; }
+  new U({ name: "test" });
+
+  assert.deepEqual(order, ["first", "second", "third"]);
+
+  Base.validationHandlers = cleanup;
+});
+
+test("handler error propagates with correct metadata", () => {
+  const cleanup = Base.validationHandlers;
+  Base.validationHandlers = [];
+  Base.addValidationHandler((conf, value, path) => {
+    throw buildError(ValueError, "custom fail", "myHandler", path, "expected", value, "CUSTOM_CODE");
+  });
+
+  class U extends Base { static schema = { x: { type: String } }; }
+
+  try { new U({ x: "bad" }); assert.fail("should throw"); }
+  catch (e) {
+    assert.ok(e instanceof ValueError);
+    assert.equal(e.message, "custom fail");
+    assert.equal(e.path.join("."), "x");
+    assert.equal(e.expected, "expected");
+    assert.equal(e.received, "bad");
+    assert.equal(e.code, "CUSTOM_CODE");
+  }
+
+  Base.validationHandlers = cleanup;
+});
+
+test("validation handlers run on nested object fields", () => {
+  const paths = [];
+  const cleanup = Base.validationHandlers;
+  Base.validationHandlers = [];
+  Base.addValidationHandler((conf, value, path) => { paths.push(path); });
+
+  class U extends Base {
+    static schema = {
+      name: { type: String },
+      profile: {
+        type: Object,
+        keys: { role: { type: String }, age: { type: Number, optional: true } }
+      }
+    };
+  }
+  new U({ name: "Alice", profile: { role: "admin", age: 25 } });
+
+  assert.ok(paths.includes("name"));
+  assert.ok(paths.includes("profile.role"));
+  assert.ok(paths.includes("profile.age"));
+
+  Base.validationHandlers = cleanup;
+});
+
+test("handler does not affect valid values", () => {
+  const cleanup = Base.validationHandlers;
+  Base.validationHandlers = [];
+  Base.addValidationHandler((conf, value) => {
+    if (conf.type === Number && value < 0) throw buildError(ValueError, "no negatives", undefined, "", "", value, "");
+  });
+
+  class U extends Base { static schema = { score: { type: Number } }; }
+  const u = new U({ score: 42 });
+  assert.equal(u.score, 42);
+  assert.throws(() => new U({ score: -1 }), /no negatives/);
+
+  Base.validationHandlers = cleanup;
+});
+
+// ==================== AUTOREQUIRE ====================
+
+test("autorequire default (undefined) throws on missing required field", () => {
+  const cleanup = Base.autorequire;
+  delete Base.autorequire;
+
+  class U extends Base { static schema = { name: { type: String } }; }
+  assert.throws(() => new U({}), /Missing required property/);
+
+  Base.autorequire = cleanup;
+});
+
+test("autorequire true throws on missing required field", () => {
+  const cleanup = Base.autorequire;
+  Base.autorequire = true;
+
+  class U extends Base { static schema = { name: { type: String } }; }
+  assert.throws(() => new U({}), /Missing required property/);
+
+  Base.autorequire = cleanup;
+});
+
+test("autorequire false allows missing required field silently", () => {
+  const cleanup = Base.autorequire;
+  Base.autorequire = false;
+
+  class U extends Base { static schema = { name: { type: String } }; }
+  const u = new U({});
+  assert.equal(u.name, undefined);
+
+  Base.autorequire = cleanup;
+});
+
+test("autorequire false still respects explicit required:true", () => {
+  const cleanup = Base.autorequire;
+  Base.autorequire = false;
+
+  class U extends Base { static schema = { name: { type: String, required: true } }; }
+  assert.throws(() => new U({}), /Missing required property/);
+
+  Base.autorequire = cleanup;
+});
+
+test("autorequire false still respects explicit optional:false", () => {
+  const cleanup = Base.autorequire;
+  Base.autorequire = false;
+
+  class U extends Base { static schema = { name: { type: String, optional: false } }; }
+  assert.throws(() => new U({}), /Missing required property/);
+
+  Base.autorequire = cleanup;
+});
+
+test("autorequire true respects required:false opt-out", () => {
+  const cleanup = Base.autorequire;
+  Base.autorequire = true;
+
+  class U extends Base { static schema = { name: { type: String, required: false } }; }
+  assert.doesNotThrow(() => new U({}));
+
+  Base.autorequire = cleanup;
+});
+
+test("autorequire true respects optional:true opt-out", () => {
+  const cleanup = Base.autorequire;
+  Base.autorequire = true;
+
+  class U extends Base { static schema = { name: { type: String, optional: true } }; }
+  assert.doesNotThrow(() => new U({}));
+
+  Base.autorequire = cleanup;
+});
+
+test("autorequire does not affect fields with defaults", () => {
+  const cleanup = Base.autorequire;
+  Base.autorequire = false;
+
+  class U extends Base { static schema = { role: { type: String, default: "user" } }; }
+  assert.doesNotThrow(() => new U({}));
+  const u = new U({});
+  assert.equal(u.role, "user");
+
+  Base.autorequire = cleanup;
+});
