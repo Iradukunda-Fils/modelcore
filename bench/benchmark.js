@@ -3,7 +3,7 @@ import Base from '../base.js';
 
 class Email {
   constructor(value) {
-    if (typeof value !== 'string' || !value.includes('@')) throw new Error('Invalid email');
+    if (typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw new Error('Invalid email');
     this.value = value;
   }
 }
@@ -29,9 +29,8 @@ const iterations = Number(process.env.BENCH_ITERATIONS || 25000);
 const warmup = Math.min(2000, Math.max(200, Math.floor(iterations / 10)));
 const results = {
   'construct + validate': null,
-  'createFrom factory': null,
-  'construct + validate + update validated fields': null,
-  'construct + validate + array mutations': null
+  'Model.create() method': null,
+  'bulk update validated fields': null,
 }
 
 function bench(name, fn) {
@@ -56,8 +55,8 @@ bench('construct + validate', (i) => {
   });
 });
 
-bench('createFrom factory', (i) => {
-  User.createFrom({
+bench('Model.create() method', (i) => {
+  User.create({
     id: i,
     name: '  Alice  ',
     email: new Email('alice@example.com'),
@@ -66,26 +65,14 @@ bench('createFrom factory', (i) => {
   });
 });
 
-bench('construct + validate + update validated fields', (i) => {
-  const user = new User({
-    id: i,
-    name: 'Alice',
-    email: new Email('alice@example.com')
-  });
-  user.update({ name: '  Bob  ', tags: [' x ', ' y '] });
+const user = new User({
+  id: 0,
+  name: 'Alice',
+  email: new Email('alice@example.com')
 });
 
-bench('construct + validate + array mutations', (i) => {
-  const user = new User({
-    id: i,
-    name: 'Alice',
-    email: new Email('alice@example.com'),
-    tags: ['init']
-  });
-  user.tags.push(' one ');
-  user.tags.unshift(' zero ');
-  user.tags.splice(1, 0, ' middle ');
-  user.tags.concat([' extra ']);
+bench('batch update validated fields', (i) => {
+  user.update({ id: i, name: '  Bob  ', tags: [' x ', ' y '] });
 });
 
 const table = Object.entries(results).map(([name, { elapsedMs, opsPerSec }]) => ({

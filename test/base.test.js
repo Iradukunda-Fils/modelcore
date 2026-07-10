@@ -285,6 +285,7 @@ test("default factories produce distinct values and are applied when missing", (
   const a = new Item({});
   const b = new Item({});
   assert.ok(a.createdAt instanceof Date && b.createdAt instanceof Date);
+  console.log(a.id, b.id);
   assert.notEqual(a.id, b.id);
 });
 
@@ -299,7 +300,7 @@ test("nested validate() throws and blocks construction when required nested key 
     };
   }
 
-  assert.throws(() => User.createFrom({ channel: { name: 'email' } }), /missing email/);
+  assert.throws(() => User.create({ channel: { name: 'email' } }), /missing email/);
 });
 
 test("splice delete-only works and does not validate when no items added", () => {
