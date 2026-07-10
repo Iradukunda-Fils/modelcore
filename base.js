@@ -72,7 +72,7 @@ function parsePath(path) {
     });
     return parts;
 }
-function buildError(errorType, message, source, path, expected, received, code) {
+export function buildError(errorType, message, source, path, expected, received, code) {
     return new errorType({ message, source, path, expected, received, code });
 }
 function normalizeConf(conf, path) {
@@ -247,6 +247,11 @@ export default class Base {
         const ctor = this.constructor;
         return new Proxy(this, ctor.__proxyHandler || (ctor.__proxyHandler = createProxyHandler(ctor)));
     }
+    static addValidationHandler(handler) {
+        if (!Base.validationHandlers)
+            Base.validationHandlers = [];
+        Base.validationHandlers.push(handler);
+    }
     static createFrom(obj, parseConfig) {
         return new this(obj, parseConfig);
     }
@@ -414,6 +419,10 @@ export default class Base {
             throw buildError(RangeError, `Value too small for '${path}', minimum: ${conf.min}`, this.validateType, path, null, value, "VALUE_TOO_SMALL");
         if (conf.enum && !conf.enum.includes(value))
             throw buildError(EnumValueError, `Invalid value for '${path}', expected one of: ${conf.enum.join(", ")}`, this.validateType, path, null, value, "INVALID_ENUM_VALUE");
+        for (const handler of Base.validationHandlers || []) {
+            if (typeof handler === "function")
+                handler(conf, value, path);
+        }
         if (conf.afterChecks && typeof conf.afterChecks === "function") {
             const newVal = conf.afterChecks(value);
             if (!isNone(newVal) || conf.optional)

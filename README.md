@@ -96,7 +96,10 @@ Every assignment and construction runs through this exact sequence:
 5. **`enum` check** — value must be in the allowed set
 6. **`afterChecks`** — post-type transformation
 7. **Custom `validate` hook** — arbitrary validation logic (throw to reject)
-8. **Immutability check** — if the field or class is immutable, reject the mutation
+8. **Validation handlers** — registered middleware functions run in order — see [Validation handlers](#validation-handlers)
+9. **`afterChecks`** — post-type transformation
+10. **Custom `validate` hook** — arbitrary validation logic (throw to reject)
+11. **Immutability check** — if the field or class is immutable, reject the mutation
 
 ---
 
@@ -209,6 +212,88 @@ const user = new User({ email: 'alice@example.com', name: 'Alice' });
 
 ---
 
+## Validation handlers (middleware)
+
+Register reusable validation logic that runs on **every field, every model, every time** — like a plugin system for the validation pipeline.
+
+```typescript
+import Base, { buildError, ValueError } from '@bufferpunk/modelcore';
+
+// 1. Define a handler that reads custom config properties
+function validateRegex(conf: any, value: any, path: string) {
+  if (conf.regex && typeof value === 'string') {
+    if (!conf.regex.test(value))
+      throw buildError(ValueError,
+        `Value does not match regex ${conf.regex}`,
+        validateRegex, path, conf.regex, value, "INVALID_REGEX");
+  }
+}
+
+// 2. Register it once — applies everywhere
+Base.addValidationHandler(validateRegex);
+
+// 3. Use custom properties in your field config (the index signature allows it)
+class User extends Base {
+  static schema = {
+    name: {
+      type: String,
+      regex: /^[a-zA-Z\s]+$/,       // custom property, consumed by validateRegex
+      beforeChecks: v => v.trim(),
+    },
+    nickname: {
+      type: String,
+      minWords: 2,                    // another custom property for a different handler
+    },
+  } as const satisfies SchemaDefinition;
+}
+```
+
+Handler functions receive `(FieldConfig, value, path)` and are called **after** built-in checks (type, min/max, enum) and **before** `afterChecks`. Throw any `ModelCoreError` subclass (or a regular `Error`) to reject the value.
+
+### Custom field config properties
+
+Because `FieldConfig` includes `[key: string]: any`, you can attach arbitrary metadata to field definitions without TypeScript errors. This lets handlers carry their own configuration alongside the field:
+
+```typescript
+// Define handlers that read your custom properties
+Base.addValidationHandler((conf, value, path) => {
+  if (conf.minWords && typeof value === 'string') {
+    const count = value.trim().split(/\s+/).length;
+    if (count < conf.minWords)
+      throw buildError(ValueError, `Must have at least ${conf.minWords} words`, ...);
+  }
+});
+
+// Use them in schemas with zero boilerplate
+class Article extends Base {
+  static schema = {
+    title:   { type: String, minWords: 3 },
+    body:    { type: String, minWords: 50 },
+    summary: { type: String, minWords: 1, optional: true },
+  } as const satisfies SchemaDefinition;
+}
+```
+
+### `buildError()` helper
+
+To let handlers throw consistent, typed errors:
+
+```typescript
+import { buildError, ValueError } from '@bufferpunk/modelcore';
+
+throw buildError(
+  ValueError,             // Error class (any ModelCoreError subclass)
+  "Human-readable message",
+  myHandlerFunction,      // source
+  "field.path",           // path
+  "expected value",       // expected
+  "received value",       // received
+  "CUSTOM_ERROR_CODE"     // code
+);
+```
+
+---
+
 ## Union types
 
 ```typescript
@@ -285,7 +370,7 @@ All errors extend `ModelCoreError`, which carries `source`, `path`, `expected`, 
 
 ## Performance
 
-ModelCore achieves **>300K ops/sec** across all operations on 100K iterations (Node 24):
+ModelCore achieves **>380K ops/sec** across all operations on 100K iterations (Node 24) on a regular laptop:
 
 | Operation | Ops/sec |
 |---|---|
@@ -293,11 +378,7 @@ ModelCore achieves **>300K ops/sec** across all operations on 100K iterations (N
 | `Model.create()` factory | ~383K |
 | `batch update validated fields` (partial 3/5 fields) | ~399K |
 
-This is enabled by:
-
-- **Skip-unchanged optimization** — `update()` only validates fields present in the incoming data. Unchanged fields are left as-is.
-- **Handler caching** — nested object and array proxy handlers are created once per instance per field path, then reused across subsequent updates.
-- **Zero Object.defineProperty calls** — property descriptors are only created once at construction. After that, all property access is via the proxy handler.
+This is comparable to the fastest validation libraries, while also providing continuous enforcement and nested object support. This is enabled by:
 
 Run the included benchmark yourself:
 
@@ -316,11 +397,13 @@ class Base {
   static schema: SchemaDefinition;
   static version?: number;
   static immutable?: boolean;
+  static validationHandlers?: Array<Function>;
 
   constructor(obj: Record<string, any>, parseConfig?: parserConfig);
 
   static createFrom<T>(obj, parseConfig?): SchemaToType<T['schema']>;
   static create<T>(obj, parseConfig?): SchemaToType<T['schema']>;
+  static addValidationHandler(handler: Function): void;
 
   update(obj: Record<string, any>, parseConfig?: parserConfig): void;
   toObject(): Record<string, any>;
@@ -331,13 +414,10 @@ class Base {
 | Method | Description |
 |---|---|
 | `new Base(data, opts?)` | Creates and validates instance. Returns a Proxy. |
-| `Base.createFrom(data, opts?)` | Factory — return type is inferred from schema. |
-| `Base.create(data, opts?)` | Alias for `createFrom`. |
+| `Model.createFrom(data, opts?)` | Factory — return type is inferred from schema. |
+| `Model.create(data, opts?)` | Alias for `createFrom`. |
+| `Base.addValidationHandler(handler)` | Register a middleware function `(conf, value, path) => void` run during every `validateType` call. |
 | `instance.update(data, opts?)` | Batch/Bulk-update validated fields. |
 | `instance.toObject()` | Returns a plain object with all current values. |
 | `instance.json()` | To make things easier for you |
 
-
-## License
-
-MIT

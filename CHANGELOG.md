@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-07-10
+
+### Added
+
+- **Validation handler / middleware system** (`Base.addValidationHandler(handler)`): Register functions `(conf, value, path) => void` that run during every `validateType` call, after built-in checks (type, min/max, enum) and before `afterChecks`. Handlers can throw to reject a value. Registered once on `Base`, applied to every model and every field automatically.
+- **`FieldConfig` index signature** (`[key: string]: any`): Schemas can now carry arbitrary metadata properties (e.g., `regex`, `minWords`) alongside standard config keys, consumed by custom validation handlers.
+- **`buildError()` is now exported**: Enables custom handlers to throw typed `ModelCoreError` subclasses with proper `source`, `path`, `expected`, `received`, and `code` properties.
+
+### Changed
+
+- `version` instance property removed from type declaration (was redundant — `ctor.version` handles versioning at the class level).
+- Updated README with validation handler documentation, `buildError` reference, and expanded API docs.
+- Updated `examples/user.ts` to demonstrate custom `regex` validation with a handler.
+
 ## [1.3.0] - 2026-07-10
 
 ### Performance (3-4x improvement)

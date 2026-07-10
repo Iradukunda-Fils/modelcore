@@ -14,6 +14,7 @@ export interface FieldConfig {
     properties?: Record<string, FieldConfig | Function>;
     values?: FieldConfig | Function;
     coerce?: boolean;
+    [key: string]: any;
 }
 export interface SchemaDefinition {
     [key: string]: Function | FieldConfig;
@@ -109,13 +110,15 @@ export type SchemaToType<S extends Record<string, any>> = {
 } & {
     [K in OptionalKeys<S>]?: InferFieldRaw<S[K]>;
 };
+export declare function buildError(errorType: new (errObj: errorObject) => ModelCoreError, message: string, source?: string | Function, path?: string, expected?: any, received?: any, code?: string): ModelCoreError;
 export default class Base {
     static schema: SchemaDefinition;
     static version?: number;
     static immutable?: boolean;
-    version?: number | undefined;
+    static validationHandlers: Array<Function>;
     [key: string]: any;
     constructor(obj: Record<string, any>, parseConfig?: parserConfig);
+    static addValidationHandler(handler: Function): void;
     static createFrom<T extends typeof Base>(this: T, obj: SchemaToType<T['schema']>, parseConfig?: parserConfig): SchemaToType<T['schema']>;
     static create<T extends typeof Base>(this: T, obj: SchemaToType<T['schema']>, parseConfig?: parserConfig): SchemaToType<T['schema']>;
     update(obj: Record<string, any>, parseConfig?: parserConfig, isNew?: boolean): void;
