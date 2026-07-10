@@ -14,6 +14,7 @@ export interface FieldConfig {
   properties?: Record<string, FieldConfig | Function>;
   values?: FieldConfig | Function;
   coerce?: boolean;
+  [key: string]: any; // Allows additional properties for extensibility
 }
 
 export interface SchemaDefinition {
@@ -153,7 +154,7 @@ function parsePath(path: string | undefined): Array<string | number> {
   return parts;
 }
 
-function buildError(
+export function buildError(
   errorType: new (errObj: errorObject) => ModelCoreError,
   message: string,
   source?: string | Function,
@@ -328,7 +329,7 @@ export default class Base {
   declare static schema: SchemaDefinition;
   declare static version?: number;
   declare static immutable?: boolean;
-  declare version?: number | undefined;
+  declare static validationHandlers: Array<Function>;
 
   [key: string]: any;
 
@@ -337,6 +338,11 @@ export default class Base {
     this.update(obj, parseConfig, true);
     const ctor = this.constructor as typeof Base & BaseConstructor;
     return new Proxy(this, ctor.__proxyHandler || (ctor.__proxyHandler = createProxyHandler(ctor)));
+  }
+
+  static addValidationHandler(handler: Function) {
+    if (!Base.validationHandlers) Base.validationHandlers = [];
+    Base.validationHandlers.push(handler);
   }
 
   static createFrom<T extends typeof Base>(
@@ -508,6 +514,11 @@ export default class Base {
     if ((conf.max !== undefined) && (value.length ? value.length > conf.max : value > conf.max)) throw buildError(RangeError, `Value too large for '${path}', maximum: ${conf.max}`, this.validateType, path, null, value, "VALUE_TOO_LARGE");
     if ((conf.min !== undefined) && (value.length ? value.length < conf.min : value < conf.min)) throw buildError(RangeError, `Value too small for '${path}', minimum: ${conf.min}`, this.validateType, path, null, value, "VALUE_TOO_SMALL");
     if (conf.enum && !conf.enum.includes(value)) throw buildError(EnumValueError, `Invalid value for '${path}', expected one of: ${conf.enum.join(", ")}`, this.validateType, path, null, value, "INVALID_ENUM_VALUE");
+
+    for (const handler of Base.validationHandlers || []) {
+      if (typeof handler === "function") handler(conf, value, path);
+    }
+
     if (conf.afterChecks && typeof conf.afterChecks === "function") {
       const newVal = conf.afterChecks(value);
       if (!isNone(newVal) || conf.optional) value = newVal;

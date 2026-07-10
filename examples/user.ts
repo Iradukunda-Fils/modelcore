@@ -1,4 +1,4 @@
-import Base, { SchemaDefinition, Union } from "../base.ts";
+import Base, { type FieldConfig, type SchemaDefinition, Union, ValueError, buildError } from "../base.ts";
 
 class Email extends String {
   /**
@@ -10,7 +10,7 @@ class Email extends String {
    * You can develop your own library of custom types like this and reuse them across your schemas.
    * That is the best practise that keeps your code clean, predictable and maintainable.
    */
-  constructor(public email: string) {
+  constructor(email: string) {
     if (!/^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z]{2,})+$/.test(email))
       throw new Error("Invalid email");
     super(email.trim().toLowerCase());
@@ -31,6 +31,7 @@ class User extends Base {
       max: 80,
       min: 5,
       required: true,
+      regex: /^[a-zA-Z\s]+$/, // demonstating how to add a custom validation handler / middleware.
       beforeChecks: (value: any) => typeof value === "string" ? value.trim() : value,
       afterChecks: (value: any) => value.replace(/\s+/g, " ")
     },
@@ -65,6 +66,7 @@ class User extends Base {
       optional: true,
       default: "english",
       enum: ["english", "spanish", "portuguese"],
+      gibberish: "adkfasdfbaisdfb", // You can add any custom properties you want to the field config, for your own use.
       beforeChecks: (value: any) => typeof value === "string" ? value.toLowerCase().trim() : value,
       afterChecks: (value: any) => value.charAt(0).toUpperCase() + value.slice(1)
     },
@@ -96,10 +98,20 @@ class User extends Base {
   } as const satisfies SchemaDefinition;
 }
 
+function validateRegex (conf: FieldConfig, value: any, path: string)  {
+  // Custom regex handler. It will be available for all models that extend Base, and will be called at validation time.
+  if (conf.regex && typeof value === "string") {
+    if (!conf.regex.test(value))
+      throw buildError(ValueError, `Value does not match regex ${conf.regex}`, validateRegex, path, conf.regex.toString(), value, "INVALID_REGEX");
+  }
+}
+
+Base.addValidationHandler(validateRegex); // Middleware / Custom handlers for additional validation logic. You can add as many as you want, and they will be called in the order they were added.
+
 // use this `createFrom` factory method to get proper type inference and parsing on input
 // If you don't care about type inference and type hints, you can also use the constructor directly: `new User(obj)`
 const user = User.createFrom({ 
-  name: "   John    Doe   ",
+  name: "   John    Doe  ",
   nickname: "Johnny",
   channel: {
     name: "email",
@@ -126,8 +138,6 @@ try { user.cars![0].year = 2021; } catch (error) { console.error(`Error updating
 // try { user.cars![0] = "Not a car"; } catch (error) { console.error(`Error updating user: ${(error as Error).message}`); }
 
 user.cars!.push({ make: "Ford", model: "Mustang", year: 2019, plate_number: "MUS456", color: "black" });
-console.log("\nUpdated cars:");
-console.log(user.cars);
 
 /*
 This example shows:
@@ -136,4 +146,5 @@ This example shows:
 - keys / values for nested objects and arrays
 - immutable field configuration
 - automatic version assignment
+- custom validation handlers
 */
