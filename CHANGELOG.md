@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-07-12
+
+### Added
+
+- **`Set` schema type**: Define `{ type: Set, values: { type: String } }` fields. Backed by a Proxy handler that validates `.add()` calls. Accepts any `Iterable` at construction — converts via `Array.from()`. Object values with nested `keys` are supported.
+- **`Map` schema type**: Define `{ type: Map, keys: { score: { type: Number, min: 0 } } }` fields. Backed by a Proxy handler that validates `.set()` calls per-key schema. Proxies `.get()`, `.has()`, `.delete()`, `.forEach()`, `.keys()`, `.values()`, `.entries()` to the raw Map.
+- **Named validation handlers**: `Base.addValidationHandler(name, fn)` and `Base.removeValidationHandler(name)` replace the anonymous array-based API. Duplicate names are silently ignored. Handlers live on `constructor.validationHandlers` (a `Map<string, Function>`) and are shared via prototype chain.
+- **Extended test coverage**: 11 new tests covering Set/Map construction and mutation, handler duplicate-name dedup, prototype-chain sharing, and error metadata (`buildError`, `expected` field values).
+
+### Changed
+
+- Validation pipeline order: handlers now run after `enum` check and before `afterChecks` (was after `afterChecks`/`validate`).
+- Error `expected` field now carries meaningful values (`conf.type`, `conf.max`, `conf.min`, `conf.enum`, `"Array"`) instead of `null`.
+- `static version` removed entirely (class-level versioning dropped; `update` no longer sets `this.version`).
+- `base.js` synced with `base.ts` for Set/Map/handler changes.
+
 ## [1.5.0] - 2026-07-10
 
 ### Added

@@ -2,7 +2,7 @@
 
 **Runtime entity integrity for JavaScript and TypeScript.**
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/modelcore/ci.yml?branch=main)](https://github.com/bufferpunk/modelcore) [![Coverage](https://img.shields.io/badge/coverage-97%25-green)](https://github.com/bufferpunk/modelcore) [![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)](https://npmjs.com/package/@bufferpunk/modelcore) [![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)](https://github.com/bufferpunk/modelcore/blob/main/LICENSE)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/bufferpunk/modelcore/ci.yml?branch=main)](https://github.com/bufferpunk/modelcore) [![Coverage](https://img.shields.io/badge/coverage-95.71%25-green)](https://github.com/bufferpunk/modelcore) [![npm version](https://img.shields.io/npm/v/@bufferpunk/modelcore)](https://npmjs.com/package/@bufferpunk/modelcore) [![License](https://img.shields.io/npm/l/@bufferpunk/modelcore)](https://github.com/bufferpunk/modelcore/blob/main/LICENSE)
 
 ---
 
@@ -94,12 +94,10 @@ Every assignment and construction runs through this exact sequence:
 3. **Type validation and coercion** — checks `value.constructor === conf.type`; optional `coerce: true` calls the constructor
 4. **`min` / `max` constraints** — applies to `String.length` or numeric value
 5. **`enum` check** — value must be in the allowed set
-6. **`afterChecks`** — post-type transformation
-7. **Custom `validate` hook** — arbitrary validation logic (throw to reject)
-8. **Validation handlers** — registered middleware functions run in order — see [Validation handlers](#validation-handlers)
-9. **`afterChecks`** — post-type transformation
-10. **Custom `validate` hook** — arbitrary validation logic (throw to reject)
-11. **Immutability check** — if the field or class is immutable, reject the mutation
+6. **Validation handlers** — registered middleware functions run in order — see [Validation handlers](#validation-handlers)
+7. **`afterChecks`** — post-type transformation
+8. **Custom `validate` hook** — after everything has been checked, transformed and set
+9. **Immutability check** — if the field or class is immutable, reject the mutation
 
 ---
 
@@ -213,6 +211,57 @@ const user = new User({ email: 'alice@example.com', name: 'Alice' });
 
 ---
 
+## Set
+
+```typescript
+class User extends Base {
+  static schema = {
+    tags: { type: Set, values: { type: String, beforeChecks: v => v.trim() } },
+    achievements: {
+      type: Set,
+      values: { type: Object, keys: { name: String, date: Date } }
+    }
+  };
+}
+
+const user = new User({
+  tags: new Set(['  one  ', '  two  ']),
+  achievements: new Set([{ name: 'Star Gazer', date: new Date() }])
+});
+
+user.tags.add('  three  '); // validated and trimmed
+```
+
+Accepts any `Iterable` (not just `Set`) — `Array.from()` converts internally.
+
+---
+
+## Map
+
+```typescript
+class User extends Base {
+  static schema = {
+    metadata: {
+      type: Map,
+      keys: {
+        role:  { type: String, enum: ['admin', 'user'] },
+        score: { type: Number, min: 0 }
+      }
+    }
+  };
+}
+
+const user = new User({
+  metadata: new Map([['role', 'admin'], ['score', 100]])
+});
+
+user.metadata.set('score', 200); // validated against key schema
+```
+
+Everything behave naturally, with added validation.
+
+---
+
 ## Validation handlers (middleware)
 
 Register reusable validation logic that runs on **every field, every model, every time** — like a plugin system for the validation pipeline.
@@ -230,8 +279,8 @@ function validateRegex(conf: any, value: any, path: string) {
   }
 }
 
-// 2. Register it once — applies everywhere
-Base.addValidationHandler(validateRegex);
+// 2. Register it with a unique name — applies everywhere
+Base.addValidationHandler("regexValidator", validateRegex);
 
 // 3. Use custom properties in your field config (the index signature allows it)
 class User extends Base {
@@ -249,7 +298,18 @@ class User extends Base {
 }
 ```
 
-Handler functions receive `(FieldConfig, value, path)` and are called **after** built-in checks (type, min/max, enum) and **before** `afterChecks`. Throw any `ModelCoreError` subclass (or a regular `Error`) to reject the value.
+Handler functions receive `(FieldConfig, value, path)` and are called **after** built-in checks (type, min/max, enum) and **before** `afterChecks` hook. Throw any `ModelCoreError` subclass (or a regular `Error`) to reject the value.
+
+### Registration
+
+Validation handlers live on `constructor.validationHandlers` (a `Map<string, Function>`). Because of JavaScript's prototype chain, setting a handler on `User` mutates a Map shared with `Base` and all sibling subclasses — there is no per-class isolation. Deleting from `User` or `Base` both affect the same underlying Map.
+
+| Method | Description |
+|---|---|
+| `Base.addValidationHandler(name, fn)` | Register a global handler. Duplicate names are silently ignored. |
+| `User.addValidationHandler(name, fn)` | Register a handler — stored on `User`'s prototype chain (shared with `Base` and siblings). |
+| `Base.removeValidationHandler(name)` | Remove a global handler by name. |
+| `User.removeValidationHandler(name)` | Remove a handler — walks the same shared Map. |
 
 ### Custom field config properties
 
@@ -257,12 +317,8 @@ Because `FieldConfig` includes `[key: string]: any`, you can attach arbitrary me
 
 ```typescript
 // Define handlers that read your custom properties
-Base.addValidationHandler((conf, value, path) => {
-  if (conf.minWords && typeof value === 'string') {
-    const count = value.trim().split(/\s+/).length;
-    if (count < conf.minWords)
-      throw buildError(ValueError, `Must have at least ${conf.minWords} words`, ...);
-  }
+Base.addValidationHandler("minWords", (conf, value, path) => {
+  // your implementation here, using conf.minWords
 });
 
 // Use them in schemas with zero boilerplate
@@ -411,12 +467,12 @@ All errors extend `ModelCoreError`, which carries `source`, `path`, `expected`, 
 ModelCore achieves **>380K ops/sec** across all operations on 100K iterations (Node 24) on a regular laptop:
 
 | Operation | Ops/sec |
-|---|---|
+|---|---|---|
 | `construct + validate` (5 fields incl. nested) | ~383K |
 | `Model.create()` factory | ~383K |
 | `batch update validated fields` (partial 3/5 fields) | ~399K |
 
-This is comparable to the fastest validation libraries, while also providing continuous enforcement and nested object support. This is enabled by:
+This is comparable to the fastest validation libraries, while also providing continuous enforcement and nested object support.
 
 Run the included benchmark yourself:
 
@@ -433,16 +489,16 @@ BENCH_ITERATIONS=100000 npm run bench
 ```typescript
 class Base {
   static schema: SchemaDefinition;
-  static version?: number;
   static immutable?: boolean;
   static autorequire?: boolean;
-  static validationHandlers?: Array<Function>;
+  static validationHandlers?: Map<string, Function>;
 
   constructor(obj: Record<string, any>, parseConfig?: parserConfig);
 
   static createFrom<T>(obj, parseConfig?): SchemaToType<T['schema']>;
   static create<T>(obj, parseConfig?): SchemaToType<T['schema']>;
-  static addValidationHandler(handler: Function): void;
+  static addValidationHandler(handlerName: string, handler: Function): void;
+  static removeValidationHandler(handlerName: string): void;
 
   update(obj: Record<string, any>, parseConfig?: parserConfig): void;
   toObject(): Record<string, any>;
@@ -456,7 +512,8 @@ class Base {
 | `Model.createFrom(data, opts?)` | Factory — return type is inferred from schema. |
 | `Model.create(data, opts?)` | Alias for `createFrom`. |
 | `Base.autorequire` | Global toggle: `false` allows missing non-optional fields silently (default: `undefined` = throw). |
-| `Base.addValidationHandler(handler)` | Register a middleware function `(conf, value, path) => void` run during every `validateType` call. |
+| `Base.addValidationHandler(name, fn)` | Register a named middleware function `(conf, value, path) => void`. Duplicate names are silently ignored. |
+| `Base.removeValidationHandler(name)` | Remove a previously registered handler by name. |
 | `instance.update(data, opts?)` | Batch/Bulk-update validated fields. |
 | `instance.toObject()` | Returns a plain object with all current values. |
 | `instance.json()` | To make things easier for you |

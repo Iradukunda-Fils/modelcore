@@ -86,13 +86,16 @@ export declare function Union<T extends readonly (abstract new (...args: any) =>
     of<T_1>(...items: T_1[]): T_1[];
     readonly [Symbol.species]: ArrayConstructor;
 };
-type UnwrapTypeConstructor<T> = T extends StringConstructor ? string : T extends NumberConstructor ? number : T extends BooleanConstructor ? boolean : T extends DateConstructor ? Date : T extends ArrayConstructor ? any[] : T extends ObjectConstructor ? Record<string, any> : T extends new (...args: any[]) => infer R ? R : unknown;
+type UnwrapTypeConstructor<T> = T extends {
+    unionTypes: readonly any[];
+} ? InstanceType<T['unionTypes'][number]> : T extends StringConstructor ? string : T extends NumberConstructor ? number : T extends BooleanConstructor ? boolean : T extends DateConstructor ? Date : T extends SetConstructor ? Set<any> : T extends MapConstructor ? Map<any, any> : T extends ArrayConstructor ? any[] : T extends ObjectConstructor ? Record<string, any> : T extends new (...args: any[]) => infer R ? R : unknown;
 type NormalizeField<T> = T extends FieldConfig ? T : {
     type: T;
 };
-type InferFieldRaw<T> = NormalizeField<T> extends infer F extends FieldConfig ? F['type'] extends {
-    unionTypes: readonly any[];
-} ? InstanceType<F['type']['unionTypes'][number]> : F['type'] extends ObjectConstructor ? InferObject<F> : F['type'] extends ArrayConstructor ? InferArray<F> : UnwrapTypeConstructor<F['type']> : any;
+type InferFieldConfigRaw<F extends FieldConfig> = F['type'] extends typeof Set ? InferSet<F> : F['type'] extends typeof Map ? InferMap<F> : F['type'] extends typeof Object ? InferObject<F> : F['type'] extends typeof Array ? InferArray<F> : UnwrapTypeConstructor<F['type']>;
+type InferFieldRaw<T> = T extends FieldConfig ? InferFieldConfigRaw<T> : T extends Function ? UnwrapTypeConstructor<T> : InferFieldConfigRaw<{
+    type: T;
+} & FieldConfig>;
 type OptionalKeys<T extends Record<string, any>> = {
     [K in keyof T]: NormalizeField<T[K]>['optional'] extends true ? K : NormalizeField<T[K]>['required'] extends false ? K : never;
 }[keyof T];
@@ -103,8 +106,14 @@ type InferObject<T extends FieldConfig> = T['keys'] extends Record<string, any> 
     [K in RequiredKeys<T['keys']>]: InferFieldRaw<T['keys'][K]>;
 } & {
     [K in OptionalKeys<T['keys']>]?: InferFieldRaw<T['keys'][K]>;
-} : Record<string, any>;
+} : T['properties'] extends Record<string, any> ? {
+    [K in RequiredKeys<T['properties']>]: InferFieldRaw<T['properties'][K]>;
+} & {
+    [K in OptionalKeys<T['properties']>]?: InferFieldRaw<T['properties'][K]>;
+} : Record<string, T['keys']>;
+type InferMap<T extends FieldConfig> = T['keys'] extends Record<string, any> ? Map<string, InferFieldRaw<T['keys'][keyof T['keys']]>> : T['properties'] extends Record<string, any> ? Map<string, InferFieldRaw<T['properties'][keyof T['properties']]>> : Map<string, T['keys']>;
 type InferArray<T extends FieldConfig> = T['type'] extends ArrayConstructor ? Array<InferFieldRaw<T['values']>> : any[];
+type InferSet<T extends FieldConfig> = T['type'] extends SetConstructor ? Set<InferFieldRaw<T['values']>> : Set<any>;
 export type SchemaToType<S extends Record<string, any>> = {
     [K in RequiredKeys<S>]: InferFieldRaw<S[K]>;
 } & {
@@ -113,12 +122,13 @@ export type SchemaToType<S extends Record<string, any>> = {
 export declare function buildError(errorType: new (errObj: errorObject) => ModelCoreError, message: string, source?: string | Function, path?: string, expected?: any, received?: any, code?: string): ModelCoreError;
 export default class Base {
     static schema: SchemaDefinition;
-    static version?: number;
     static immutable?: boolean;
-    static validationHandlers: Array<Function>;
+    static validationHandlers: Map<string, Function>;
+    static autorequire?: boolean;
     [key: string]: any;
     constructor(obj: Record<string, any>, parseConfig?: parserConfig);
-    static addValidationHandler(handler: Function): void;
+    static addValidationHandler(handlerName: string, handler: Function): void;
+    static removeValidationHandler(handlerName: string): void;
     static createFrom<T extends typeof Base>(this: T, obj: SchemaToType<T['schema']>, parseConfig?: parserConfig): SchemaToType<T['schema']>;
     static create<T extends typeof Base>(this: T, obj: SchemaToType<T['schema']>, parseConfig?: parserConfig): SchemaToType<T['schema']>;
     update(obj: Record<string, any>, parseConfig?: parserConfig, isNew?: boolean): void;
