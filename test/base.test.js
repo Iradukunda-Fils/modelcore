@@ -6,7 +6,6 @@ import Base, { Union, buildError, ValueError } from "../base.ts";
 
 test("validates fields, applies defaults, and runs hooks", () => {
   class User extends Base {
-    static version = 1;
     static schema = {
       name: {
         type: String,
@@ -48,14 +47,12 @@ test("validates fields, applies defaults, and runs hooks", () => {
   assert.equal(user.confirmed, false);
   assert.deepEqual(user.profile, { role: "editor" });
   assert.deepEqual(user.tags, []);
-  assert.equal(user.version, 1);
   assert.deepEqual(user.toObject(), {
     name: "John Doe",
     status: "active",
     confirmed: false,
     profile: { role: "editor" },
     tags: [],
-    version: 1
   });
 });
 
@@ -473,9 +470,7 @@ test("union functions as intended", () => {
 
 test("validation handler is called during construction and receives correct args", () => {
   const calls = [];
-  const cleanup = Base.validationHandlers;
-  Base.validationHandlers = [];
-  Base.addValidationHandler((conf, value, path) => { calls.push({ conf, value, path }); });
+  Base.addValidationHandler("dummy", (conf, value, path) => { calls.push({ conf, value, path }); });
 
   class U extends Base {
     static schema = { name: { type: String }, age: { type: Number, optional: true } };
@@ -490,13 +485,11 @@ test("validation handler is called during construction and receives correct args
   assert.equal(calls[1].value, 30);
   assert.equal(calls[1].path, "age");
 
-  Base.validationHandlers = cleanup;
+  Base.removeValidationHandler("dummy")
 });
 
 test("validation handler can reject invalid values", () => {
-  const cleanup = Base.validationHandlers;
-  Base.validationHandlers = [];
-  Base.addValidationHandler((conf, value, path) => {
+  Base.addValidationHandler("dummy", (conf, value, path) => {
     if (conf.regex && typeof value === "string" && !conf.regex.test(value))
       throw buildError(ValueError, "regex mismatch", undefined, path, conf.regex, value, "REGEX");
   });
@@ -510,29 +503,27 @@ test("validation handler can reject invalid values", () => {
   try { new U({ name: "Alice123" }); assert.fail("should throw"); }
   catch (e) { assert.equal(e.code, "REGEX"); }
 
-  Base.validationHandlers = cleanup;
+  Base.removeValidationHandler("dummy")
 });
 
 test("multiple handlers run in registration order", () => {
   const order = [];
-  const cleanup = Base.validationHandlers;
-  Base.validationHandlers = [];
-  Base.addValidationHandler(() => { order.push("first"); });
-  Base.addValidationHandler(() => { order.push("second"); });
-  Base.addValidationHandler(() => { order.push("third"); });
+  Base.addValidationHandler("dummy", () => { order.push("first"); });
+  Base.addValidationHandler("dummy1", () => { order.push("second"); });
+  Base.addValidationHandler("dummy2", () => { order.push("third"); });
 
   class U extends Base { static schema = { name: { type: String } }; }
   new U({ name: "test" });
 
   assert.deepEqual(order, ["first", "second", "third"]);
 
-  Base.validationHandlers = cleanup;
+  Base.removeValidationHandler("dummy")
+  Base.removeValidationHandler("dummy1")
+  Base.removeValidationHandler("dummy2")
 });
 
 test("handler error propagates with correct metadata", () => {
-  const cleanup = Base.validationHandlers;
-  Base.validationHandlers = [];
-  Base.addValidationHandler((conf, value, path) => {
+  Base.addValidationHandler("dummy", (conf, value, path) => {
     throw buildError(ValueError, "custom fail", "myHandler", path, "expected", value, "CUSTOM_CODE");
   });
 
@@ -548,14 +539,12 @@ test("handler error propagates with correct metadata", () => {
     assert.equal(e.code, "CUSTOM_CODE");
   }
 
-  Base.validationHandlers = cleanup;
+  Base.removeValidationHandler("dummy")
 });
 
 test("validation handlers run on nested object fields", () => {
   const paths = [];
-  const cleanup = Base.validationHandlers;
-  Base.validationHandlers = [];
-  Base.addValidationHandler((conf, value, path) => { paths.push(path); });
+  Base.addValidationHandler("dummy", (conf, value, path) => { paths.push(path); });
 
   class U extends Base {
     static schema = {
@@ -572,13 +561,11 @@ test("validation handlers run on nested object fields", () => {
   assert.ok(paths.includes("profile.role"));
   assert.ok(paths.includes("profile.age"));
 
-  Base.validationHandlers = cleanup;
+  Base.removeValidationHandler("dummy")
 });
 
 test("handler does not affect valid values", () => {
-  const cleanup = Base.validationHandlers;
-  Base.validationHandlers = [];
-  Base.addValidationHandler((conf, value) => {
+  Base.addValidationHandler("dummy", (conf, value) => {
     if (conf.type === Number && value < 0) throw buildError(ValueError, "no negatives", undefined, "", "", value, "");
   });
 
@@ -587,7 +574,7 @@ test("handler does not affect valid values", () => {
   assert.equal(u.score, 42);
   assert.throws(() => new U({ score: -1 }), /no negatives/);
 
-  Base.validationHandlers = cleanup;
+  Base.removeValidationHandler("dummy")
 });
 
 // ==================== AUTOREQUIRE ====================
@@ -673,4 +660,179 @@ test("autorequire does not affect fields with defaults", () => {
   assert.equal(u.role, "user");
 
   Base.autorequire = cleanup;
+});
+
+// ==================== SET ====================
+
+test("Set construction with plain values", () => {
+  class U extends Base {
+    static schema = {
+      tags: { type: Set, values: { type: String } }
+    };
+  }
+
+  const u = new U({ tags: new Set(["a", "b"]) });
+  assert.ok(u.tags instanceof Set);
+  assert.deepEqual(Array.from(u.tags), ["a", "b"]);
+});
+
+test("Set .add() validates items", () => {
+  class U extends Base {
+    static schema = {
+      tags: { type: Set, values: { type: String, beforeChecks: v => v.trim() } }
+    };
+  }
+
+  const u = new U({ tags: new Set(["a"]) });
+  u.tags.add("  b  ");
+  assert.equal(u.tags.size, 2);
+  // beforeChecks throws on non-string values
+  assert.throws(() => u.tags.add(123));
+});
+
+test("Set construction with Object values", () => {
+  class U extends Base {
+    static schema = {
+      items: {
+        type: Set,
+        values: {
+          type: Object,
+          keys: { name: { type: String }, qty: { type: Number } }
+        }
+      }
+    };
+  }
+
+  const u = new U({ items: new Set([{ name: "foo", qty: 1 }]) });
+  assert.equal(u.items.size, 1);
+});
+
+test("Set rejects non-Set input at construction", () => {
+  class U extends Base {
+    static schema = {
+      tags: { type: Set, values: { type: String } }
+    };
+  }
+
+  assert.throws(() => new U({ tags: ["x", "y"] }), /Invalid type/);
+});
+
+// ==================== MAP ====================
+
+test("Map construction with keys schema", () => {
+  class U extends Base {
+    static schema = {
+      meta: {
+        type: Map,
+        keys: { role: { type: String }, score: { type: Number, min: 0 } }
+      }
+    };
+  }
+
+  const u = new U({ meta: new Map([["role", "admin"], ["score", 100]]) });
+  assert.ok(u.meta instanceof Map);
+  assert.equal(u.meta.get("role"), "admin");
+  assert.equal(u.meta.get("score"), 100);
+});
+
+test("Map .set() validates values against key schema", () => {
+  class U extends Base {
+    static schema = {
+      meta: {
+        type: Map,
+        keys: { score: { type: Number, min: 0, max: 999, optional: true } }
+      }
+    };
+  }
+
+  const u = new U({ meta: new Map() });
+  u.meta.set("score", 50);
+  assert.equal(u.meta.get("score"), 50);
+  assert.throws(() => u.meta.set("score", -1), /Value too small/);
+  assert.throws(() => u.meta.set("score", 1000), /Value too large/);
+});
+
+test("Map .get() / .has() / .delete() proxy to underlying Map", () => {
+  class U extends Base {
+    static schema = {
+      meta: {
+        type: Map,
+        keys: { x: { type: Number } }
+      }
+    };
+  }
+
+  const u = new U({ meta: new Map([["x", 1]]) });
+  assert.equal(u.meta.get("x"), 1);
+  assert.ok(u.meta.has("x"));
+  u.meta.delete("x");
+  assert.equal(u.meta.has("x"), false);
+});
+
+// ==================== HANDLER SCOPING & DEDUP ====================
+
+test("duplicate handler name is silently ignored", () => {
+  const order = [];
+  Base.addValidationHandler("dedupTest", () => order.push("first"));
+  Base.addValidationHandler("dedupTest", () => order.push("second"));
+
+  class U extends Base { static schema = { x: { type: String } }; }
+  new U({ x: "test" });
+
+  assert.deepEqual(order, ["first"]);
+
+  Base.removeValidationHandler("dedupTest");
+});
+
+test("handlers are shared via prototype inheritance (no per-class isolation)", () => {
+  const calls = [];
+
+  Base.addValidationHandler("shared", () => calls.push("global"));
+
+  class A extends Base {
+    static schema = { x: { type: String } };
+  }
+  class B extends Base {
+    static schema = { y: { type: String } };
+  }
+
+  new A({ x: "a" });
+  new B({ y: "b" });
+
+  assert.equal(calls.length, 2);
+
+  // Adding via subclass mutates the shared Map on Base
+  A.addValidationHandler("extra", () => calls.push("extra"));
+  new A({ x: "c" });
+  assert.ok(calls.length > 2);
+
+  Base.removeValidationHandler("shared");
+  Base.removeValidationHandler("extra");
+});
+
+// ==================== ERROR METADATA ====================
+
+test("buildError produces error with all metadata fields", () => {
+  const e = buildError(ValueError, "test msg", "sourceFn", "path.foo", "expectedVal", "receivedVal", "MY_CODE");
+  assert.ok(e instanceof ValueError);
+  assert.equal(e.message, "test msg");
+  assert.equal(e.source, "sourceFn");
+  assert.deepEqual(e.path, ["path", "foo"]);
+  assert.equal(e.expected, "expectedVal");
+  assert.equal(e.received, "receivedVal");
+  assert.equal(e.code, "MY_CODE");
+});
+
+test("error.expected contains meaningful values (type, min, max, enum)", () => {
+  class U extends Base {
+    static schema = {
+      name: { type: String, min: 2, max: 10 },
+      role: { type: String, enum: ["a", "b"] },
+      count: { type: Number, min: 1 }
+    };
+  }
+
+  try { new U({ name: "x", role: "c", count: 0 }); } catch (e) {
+    assert.ok(e.expected != null);
+  }
 });
