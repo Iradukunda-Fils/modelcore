@@ -37,7 +37,7 @@ class User extends Base {
     },
     nickname: String, // Shorthand syntax also works, it's equivalent to `nickname: { type: String }`. Best if you're coming from a Mongoose background and want to keep using that style for simple fields.
     channel: {
-      type: Object,
+      type: Map,
       keys: {
         name: { type: String, max: 5, enum: ["phone", "email"] },
         email: { type: Email, max: 35, min: 5, optional: true },
@@ -56,7 +56,7 @@ class User extends Base {
         }
       },
       validate: (value: Record<string, any>) => {
-        if (!value[value.name]) throw new Error(`Missing channel value for ${value.name}`);
+        if (!value.get(value.get("name"))) throw new Error(`Missing channel value for ${value.get("name")}`);
       }
     },
     language: {
@@ -94,9 +94,18 @@ class User extends Base {
         }
       }
     },
-    f: Union(String, Number)
+    f: Union(String, Number),
+    achievements: {
+      type: Set,
+      optional: true,
+      default: new Set(),
+      values: { type: Object, keys: { name: String, date: { type: Date } } }
+    }
   } as const satisfies SchemaDefinition;
 }
+
+
+// ========= CUSTOM VALIDATION HANDLERS =========
 
 function validateRegex (conf: FieldConfig, value: any, path: string)  {
   // Custom regex handler. It will be available for all models that extend Base, and will be called at validation time.
@@ -106,26 +115,34 @@ function validateRegex (conf: FieldConfig, value: any, path: string)  {
   }
 }
 
-Base.addValidationHandler(validateRegex); // Middleware / Custom handlers for additional validation logic. You can add as many as you want, and they will be called in the order they were added.
+// The add a global handler, available on all models.
+Base.addValidationHandler("regexValidator", validateRegex); // Middleware / Custom handlers for additional validation logic. You can add as many as you want, and they will be called in the order they were added.
+
+// Or you can add a handler that works on one specific model.
+User.addValidationHandler("regexValidator", validateRegex);
+
+
+// ========= INSTANTIATION =========
 
 // use this `createFrom` factory method to get proper type inference and parsing on input
 // If you don't care about type inference and type hints, you can also use the constructor directly: `new User(obj)`
 const user = User.createFrom({ 
-  name: "   John    Doe  ",
+  name: "   John    Doe   ",
   nickname: "Johnny",
-  channel: {
+  channel: new Map(Object.entries({
     name: "email",
     email: new Email("john@example.com"),
     subscribers: [
       { name: "Alice", email: new Email("alice@example.com") },
       { name: "Bob", email: new Email("bob@example.com") }
     ]
-  },
+  })),
   cars: [
     { make: "Toyota", model: "Camry", year: 2020, plate_number: "ABC123", color: "blue" },
     { make: "Honda", model: "Civic", plate_number: "XYZ789", color: "red" }
   ],
-  f: "This can be a string or a number"
+  f: "This can be a string or a number",
+  achievements: new Set([{ name: "Star Gazer", date: new Date() }])
 });
 
 user.cars![0].model = "Corolla"; // Works! Model is mutable.
@@ -138,6 +155,14 @@ try { user.cars![0].year = 2021; } catch (error) { console.error(`Error updating
 // try { user.cars![0] = "Not a car"; } catch (error) { console.error(`Error updating user: ${(error as Error).message}`); }
 
 user.cars!.push({ make: "Ford", model: "Mustang", year: 2019, plate_number: "MUS456", color: "black" });
+user.achievements!.add({ name: "Speed Demon", date: new Date() });
+user.channel.set("name", "phone");
+user.channel.set( "phone", "555-1234" );
+
+console.log(user); // Successfully created user with parsed and validated data.
+
+// You can remove a handler if you no longer need it.
+User.removeValidationHandler("regexValidator")
 
 /*
 This example shows:
@@ -147,4 +172,5 @@ This example shows:
 - immutable field configuration
 - automatic version assignment
 - custom validation handlers
+- custom classes for type inference and validation
 */

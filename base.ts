@@ -2,7 +2,7 @@ export interface FieldConfig {
   type: any;
   immutable?: boolean;
   optional?: boolean;
-  required?: boolean; // Alias for optional: false, included for clarity and flexibility in schema definitions
+  required?: boolean;
   default?: any;
   enum?: any[];
   max?: number;
@@ -14,7 +14,7 @@ export interface FieldConfig {
   properties?: Record<string, FieldConfig | Function>;
   values?: FieldConfig | Function;
   coerce?: boolean;
-  [key: string]: any; // Allows additional properties for extensibility
+  [key: string]: any;
 }
 
 export interface SchemaDefinition {
@@ -95,28 +95,34 @@ class ModelCoreUnion extends Array<any> {
 }
 
 type UnwrapTypeConstructor<T> =
+  T extends { unionTypes: readonly any[] } ? InstanceType<T['unionTypes'][number]> :
   T extends StringConstructor ? string :
   T extends NumberConstructor ? number :
   T extends BooleanConstructor ? boolean :
   T extends DateConstructor ? Date :
+  T extends SetConstructor ? Set<any> :
+  T extends MapConstructor ? Map<any, any> :
   T extends ArrayConstructor ? any[] :
   T extends ObjectConstructor ? Record<string, any> :
   T extends new (...args: any[]) => infer R ? R :
   unknown;
 
-// 2. Normalize a field: detect if it's a shorthand constructor or a config object
 type NormalizeField<T> = T extends FieldConfig ? T : { type: T }
 
-// 3. Extract types for nested structures or simple primitives (using normalized fields)
-type InferFieldRaw<T> = 
-  NormalizeField<T> extends infer F extends FieldConfig ?
-    F['type'] extends { unionTypes: readonly any[] } ? InstanceType<F['type']['unionTypes'][number]> :
-     F['type'] extends ObjectConstructor ? InferObject<F> :
-      F['type'] extends ArrayConstructor ? InferArray<F> :
-      UnwrapTypeConstructor<F['type']>
-    : any;
+type InferFieldConfigRaw<F extends FieldConfig> =
+  F['type'] extends typeof Set ? InferSet<F> :
+  F['type'] extends typeof Map ? InferMap<F> :
+  F['type'] extends typeof Object ? InferObject<F> :
+  F['type'] extends typeof Array ? InferArray<F> :
+    UnwrapTypeConstructor<F['type']>;
 
-// 4. Helper to cleanly separate required vs optional keys
+type InferFieldRaw<T> =
+  T extends FieldConfig
+    ? InferFieldConfigRaw<T>
+    : T extends Function
+      ? UnwrapTypeConstructor<T>
+      : InferFieldConfigRaw<{ type: T } & FieldConfig>;
+
 type OptionalKeys<T extends Record<string, any>> = {
   [K in keyof T]: NormalizeField<T[K]>['optional'] extends true ? K : NormalizeField<T[K]>['required'] extends false ? K : never
 }[keyof T];
@@ -125,16 +131,27 @@ type RequiredKeys<T extends Record<string, any>> = {
   [K in keyof T]: NormalizeField<T[K]>['optional'] extends true ? never : NormalizeField<T[K]>['required'] extends false ? never : K
 }[keyof T];
 
-// 5. Remap objects cleanly, handling both shorthand and verbose nested keys
+
 type InferObject<T extends FieldConfig> =
   T['keys'] extends Record<string, any>
     ? { [K in RequiredKeys<T['keys']>]: InferFieldRaw<T['keys'][K]> } & 
       { [K in OptionalKeys<T['keys']>]?: InferFieldRaw<T['keys'][K]> }
-    : Record<string, any>;
+    : T['properties'] extends Record<string, any> ?
+      { [K in RequiredKeys<T['properties']>]: InferFieldRaw<T['properties'][K]> } &
+      { [K in OptionalKeys<T['properties']>]?: InferFieldRaw<T['properties'][K]> }
+    : Record<string, T['keys']>;
+
+type InferMap<T extends FieldConfig> =
+  T['keys'] extends Record<string, any>
+    ? Map<string, InferFieldRaw<T['keys'][keyof T['keys']]>>
+    : T['properties'] extends Record<string, any>
+    ? Map<string, InferFieldRaw<T['properties'][keyof T['properties']]>>
+    : Map<string, T['keys']>;
 
 type InferArray<T extends FieldConfig> = T['type'] extends ArrayConstructor ? Array<InferFieldRaw<T['values']>> : any[];
 
-// 6. Map over the entire schema definition (handles mix of shorthand and verbose keys)
+type InferSet<T extends FieldConfig> = T['type'] extends SetConstructor ? Set<InferFieldRaw<T['values']>> : Set<any>;
+
 export type SchemaToType<S extends Record<string, any>> = 
   { [K in RequiredKeys<S>]: InferFieldRaw<S[K]> } & 
   { [K in OptionalKeys<S>]?: InferFieldRaw<S[K]> };
@@ -169,7 +186,7 @@ export function buildError(
 function normalizeConf(conf: FieldConfig | any, path: string): FieldConfig {
   if (typeof conf === "function") return { type: conf } as FieldConfig;
   if (conf && typeof conf === "object" && 'type' in conf) return conf as FieldConfig;
-  throw buildError(SchemaDefinitionError, `Invalid schema definition for '${path}'`, undefined, path, null, undefined, "SCHEMA_DEFINITION_ERROR");
+  throw buildError(SchemaDefinitionError, `Invalid schema definition for '${path}'`, Base, path, Object, conf, "SCHEMA_DEFINITION_ERROR");
 }
 
 
@@ -269,7 +286,7 @@ function createArrayHandler(vd: Base, confValues: Function | FieldConfig, path: 
           let result: any[] = curr;
           for (const arr of arrays) {
             if (!Array.isArray(arr))
-              throw buildError(ValueError, 'Can only concat arrays to validated array properties.', vd.runValidate, path, null, undefined, "INVALID_CONCAT_VALUE");
+              throw buildError(ValueError, 'Can only concat arrays to validated array properties.', vd.runValidate, path, Array, arr, "INVALID_CONCAT_VALUE");
             const validatedItems = arr.map((item: any, i: number) => vd.runValidate(confValues, item, `${path}[${result.length + i}]`, false));
             result = result.concat(validatedItems);
           }
@@ -293,10 +310,63 @@ function createArrayHandler(vd: Base, confValues: Function | FieldConfig, path: 
   };
 }
 
-/**
- * TODO: Handle other types like Set, Map, etc.
- *
- */
+// ==================== SET PROXY HANDLER ====================
+
+function createSetHandler(vd: Base, confValues: Function | FieldConfig, path: string): ProxyHandler<Set<any>> {
+  return {
+    get(target, key) {
+      if (key === "add") {
+        return (value: any) => {
+          const validated = vd.runValidate( confValues, value, `${path}[${target.size}]`, false);
+          target.add(validated);
+          return target;
+        };
+      }
+
+      const value = Reflect.get(target, key, target);
+
+      if (typeof value === "function")
+        return value.bind(target);
+
+      return value;
+    }
+  };
+}
+
+// ==================== MAP PROXY HANDLER ====================
+
+function createMapHandler(vd: Base, conf: FieldConfig, path: string): ProxyHandler<Map<any, any>> {
+  const keys = conf.keys || conf.properties || {};
+  return {
+    get(target: Map<string, any>, key: string | symbol): any {
+      if (typeof key === 'symbol') return target.get(key as any);
+      if (key === 'set') {
+        return function (k: any, v: any) {
+          if (k in keys) {
+            const validated = vd.runValidate(keys[k], v, `${path}.${k}`, false);
+            target.set(k, validated);
+          }
+          return target;
+        };
+      }
+      const value = Reflect.get(target, key, target);
+      if (typeof value === "function")
+        return value.bind(target);
+ 
+      return value;
+    },
+    set(target: Map<string, any>, key: string | symbol, value: any): boolean {
+      if (typeof key === 'symbol') { target.set(key as any, value); return true; }
+      if (key in keys) {
+        const validated = vd.runValidate(keys[key], value, `${path}.${key}`, false);
+        target.set(key, validated);
+        return true;
+      }
+      target.set(key, value);
+      return true;
+    }
+  };
+}
 
 // ==================== OBJECT PROXY HANDLER ====================
 
@@ -327,9 +397,8 @@ const handlerCache = new WeakMap<Base, Map<string, ProxyHandler<any>>>();
 
 export default class Base {
   declare static schema: SchemaDefinition;
-  declare static version?: number;
   declare static immutable?: boolean;
-  declare static validationHandlers: Array<Function>;
+  declare static validationHandlers: Map<string, Function>;
   declare static autorequire?: boolean;
 
   [key: string]: any;
@@ -341,9 +410,16 @@ export default class Base {
     return new Proxy(this, ctor.__proxyHandler || (ctor.__proxyHandler = createProxyHandler(ctor)));
   }
 
-  static addValidationHandler(handler: Function) {
-    if (!Base.validationHandlers) Base.validationHandlers = [];
-    Base.validationHandlers.push(handler);
+  static addValidationHandler(handlerName: string, handler: Function) {
+    const ctor = this as typeof Base & BaseConstructor;
+    if (!ctor.validationHandlers) ctor.validationHandlers = new Map();
+    if (!ctor.validationHandlers.has(handlerName)) ctor.validationHandlers.set(handlerName, handler)
+  }
+
+  static removeValidationHandler(handlerName: string) {
+    const ctor = this as typeof Base & BaseConstructor;
+    if (ctor.validationHandlers && ctor.validationHandlers.has(handlerName))
+      ctor.validationHandlers.delete(handlerName)
   }
 
   static createFrom<T extends typeof Base>(
@@ -367,7 +443,6 @@ export default class Base {
     try {
       if (!obj || typeof obj !== "object") throw TypeError("Input must be an object");
       this.setProperties(ctor.schema, obj as Record<string, any>, isNew);
-      if (ctor.version) this.version = ctor.version;
     } catch (e) {
       for (const key in this) {
         delete this[key];
@@ -412,20 +487,32 @@ export default class Base {
     const { conf, value } = this.validateType(confPassed, valuePassed, path);
     let toReturn: typeof conf.type;
     const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
-    if (
-      conf.type === Array ||
+
+    const isArray = conf.type === Array ||
       (unionTypes && unionTypes.some((t: any) => t === Array || t.prototype instanceof Array))
       || (!unionTypes && conf.type.prototype instanceof Array)
-    ) {
+
+    const isSet = !isArray && (conf.type === Set ||
+      (unionTypes && unionTypes.some((t: any) => t === Set || t.prototype instanceof Set))
+      || (!unionTypes && conf.type.prototype instanceof Set))
+
+    const isObject = !isArray && !isSet && (conf.type === Object || (unionTypes && unionTypes.some((t: any) => t === Object)));
+
+    const isMap = !isArray && !isSet && !isObject && (conf.type === Map || (unionTypes && unionTypes.some((t: any) => t === Map || t.prototype instanceof Map)))
+
+    if (isArray || isSet) {
       if (!conf.values) throw buildError(
         SchemaDefinitionError, `Missing array value configuration at ${path}`,
-        this.runValidate, path, null, value, "SCHEMA_DEFINITION_ERROR"
+        this.runValidate, path, Object, value, "SCHEMA_DEFINITION_ERROR"
       );
 
       toReturn = new conf.type();
-      for (let i = 0; i < value.length; i++) {
-        const validated = this.runValidate(conf.values!, value[i], `${path}[${i}]`, isNew);
-        toReturn[i] = validated;
+      const arrValue = isArray ? value : Array.from(value);
+
+      for (let i = 0; i < arrValue.length; i++) {
+        const validated = this.runValidate(conf.values!, arrValue[i], `${path}[${i}]`, isNew);
+        if (isSet) toReturn.add(validated);
+        else toReturn[i] = validated;
       }
 
       let handler: ProxyHandler<any> | undefined;
@@ -433,29 +520,39 @@ export default class Base {
         let cache = handlerCache.get(this);
         if (!cache) { cache = new Map(); handlerCache.set(this, cache); }
         handler = cache.get(path);
-        if (!handler) { handler = createArrayHandler(this, conf.values!, path); cache.set(path, handler); }
+        if (!handler) {
+          handler = isArray ? createArrayHandler(this, conf.values!, path) : createSetHandler(this, conf.values!, path);
+          cache.set(path, handler);
+        }
       } else {
-        handler = createArrayHandler(this, conf.values!, path);
+        handler = isArray ? createArrayHandler(this, conf.values!, path) : createSetHandler(this, conf.values!, path);
       }
       toReturn = new Proxy(toReturn, handler);
     }
 
-    else if (conf.type === Object || (unionTypes && unionTypes.some((t: any) => t === Object))) {
+    else if (isObject || isMap) {
       if (!conf.keys && !conf.properties)
-        throw buildError(SchemaDefinitionError, `Object properties schema definition missing for '${path}'`, this.runValidate, path, value.constructor, conf, 'SCHEMA_DEFINITION_ERROR')
-      const obj: Record<string, any> = {};
-      for (const childKey in conf.keys) {
-        const childVal = this.runValidate(conf.keys[childKey], value?.[childKey], `${path}.${childKey}`, isNew);
-        obj[childKey] = childVal;
+        throw buildError(SchemaDefinitionError, `Object properties schema definition missing for '${path}'`, this.runValidate, path, Object, conf, 'SCHEMA_DEFINITION_ERROR')
+
+      const obj: Record<string, typeof conf.type> | Map<string, typeof conf.type> = isObject ? {} : new Map();
+      for (const childKey in conf.keys || conf.properties || {}) {
+        const childConf = (conf.keys || conf.properties || {})[childKey];
+        const childVal = this.runValidate(childConf, isObject ? value?.[childKey] : value.get(childKey), `${path}.${childKey}`, isNew);;
+        if (isObject) (obj as Record<string, any>)[childKey] = childVal;
+        else obj.set(childKey, childVal);
       }
+
       let handler: ProxyHandler<any> | undefined;
       if (!isNew) {
         let cache = handlerCache.get(this);
         if (!cache) { cache = new Map(); handlerCache.set(this, cache); }
         handler = cache.get(path);
-        if (!handler) { handler = createObjectHandler(this, conf, path); cache.set(path, handler); }
+        if (!handler) {
+          handler = isObject ? createObjectHandler(this, conf, path) : createMapHandler(this, conf, path);
+          cache.set(path, handler);
+        }
       } else {
-        handler = createObjectHandler(this, conf, path);
+        handler = isObject ? createObjectHandler(this, conf, path) : createMapHandler(this, conf, path);
       }
       toReturn = new Proxy(obj, handler);
     }
@@ -476,6 +573,7 @@ export default class Base {
 
   private validateType(cnf: any, value: any, path: string): { conf: FieldConfig; value: any } {
     const conf: FieldConfig = normalizeConf(cnf, path);
+    const ctor = this.constructor as typeof Base & BaseConstructor;
     const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
     if (conf.beforeChecks && typeof conf.beforeChecks === "function") {
       const newVal = conf.beforeChecks(value);
@@ -486,10 +584,8 @@ export default class Base {
       if (!isNone(conf.default)) value = typeof conf.default === 'function' ? conf.default() : conf.default;
       if (isNone(value)) {
         if (conf.optional || conf.required === false) return { conf, value };
-        if (conf.required === true || conf.optional === false)
-          throw buildError(RequiredError, `Missing required property at '${path}'`, this.validateType, path, null, value, "REQUIRED_PROPERTY_MISSING");
-        if (Base.autorequire || Base.autorequire === undefined)
-          throw buildError(RequiredError, `Missing required property at '${path}'`, this.validateType, path, null, value, "REQUIRED_PROPERTY_MISSING");
+        if (conf.required === true || conf.optional === false || ctor.autorequire || ctor.autorequire === undefined)
+          throw buildError(RequiredError, `Missing required property at '${path}'`, this.validateType, path, conf.type, value, "REQUIRED_PROPERTY_MISSING");
         return { conf, value };
       }
     }
@@ -513,16 +609,16 @@ export default class Base {
       })();
 
       if (!isOfType() || isNaN(value))
-        throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, null, value, "INVALID_TYPE");
+        throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, conf.type, value, "INVALID_TYPE");
     }
 
-    if ((conf.max !== undefined) && (value.length ? value.length > conf.max : value > conf.max)) throw buildError(RangeError, `Value too large for '${path}', maximum: ${conf.max}`, this.validateType, path, null, value, "VALUE_TOO_LARGE");
-    if ((conf.min !== undefined) && (value.length ? value.length < conf.min : value < conf.min)) throw buildError(RangeError, `Value too small for '${path}', minimum: ${conf.min}`, this.validateType, path, null, value, "VALUE_TOO_SMALL");
-    if (conf.enum && !conf.enum.includes(value)) throw buildError(EnumValueError, `Invalid value for '${path}', expected one of: ${conf.enum.join(", ")}`, this.validateType, path, null, value, "INVALID_ENUM_VALUE");
+    if ((conf.max !== undefined) && (value.length ? value.length > conf.max : value > conf.max)) throw buildError(RangeError, `Value too large for '${path}', maximum: ${conf.max}`, this.validateType, path, conf.max, value, "VALUE_TOO_LARGE");
+    if ((conf.min !== undefined) && (value.length ? value.length < conf.min : value < conf.min)) throw buildError(RangeError, `Value too small for '${path}', minimum: ${conf.min}`, this.validateType, path, conf.min, value, "VALUE_TOO_SMALL");
+    if (conf.enum && !conf.enum.includes(value)) throw buildError(EnumValueError, `Invalid value for '${path}', expected one of: ${conf.enum.join(", ")}`, this.validateType, path, conf.enum, value, "INVALID_ENUM_VALUE");
 
-    for (const handler of Base.validationHandlers || []) {
-      if (typeof handler === "function") handler(conf, value, path);
-    }
+    if (ctor.validationHandlers)
+      for (const [, handler] of ctor.validationHandlers)
+        if (typeof handler === "function") handler(conf, value, path);
 
     if (conf.afterChecks && typeof conf.afterChecks === "function") {
       const newVal = conf.afterChecks(value);
