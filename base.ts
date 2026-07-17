@@ -185,7 +185,11 @@ export function buildError(
 
 function normalizeConf(conf: FieldConfig | any, path: string): FieldConfig {
   if (typeof conf === "function") return { type: conf } as FieldConfig;
-  if (conf && typeof conf === "object" && 'type' in conf) return conf as FieldConfig;
+  if (conf && typeof conf === "object" && 'type' in conf) {
+    if (isNone(conf.type))
+      throw buildError(SchemaDefinitionError, `Schema field '${path}' has no type defined`, Base, path, Function, conf.type, "SCHEMA_DEFINITION_ERROR");
+    return conf as FieldConfig;
+  }
   throw buildError(SchemaDefinitionError, `Invalid schema definition for '${path}'`, Base, path, Object, conf, "SCHEMA_DEFINITION_ERROR");
 }
 
@@ -467,6 +471,8 @@ export default class Base {
 
   private setProperties(schema: SchemaDefinition, data: Record<string, any>, isNew: boolean = false): void {
     const ctor = this.constructor as typeof Base & BaseConstructor;
+    if (!schema || typeof schema !== 'object')
+      throw buildError(SchemaDefinitionError, `${ctor.name} has no schema defined`, ctor.name, "", Object, schema, "SCHEMA_DEFINITION_ERROR");
     if (ctor.immutable && !isNew)
       throw buildError(
         ImmutableObjectError, `Cannot update immutable object of type ${ctor.name}`,
@@ -488,13 +494,18 @@ export default class Base {
     let toReturn: typeof conf.type;
     const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
 
-    const isArray = conf.type === Array ||
+    const schemaHasArray = conf.type === Array ||
       (unionTypes && unionTypes.some((t: any) => t === Array || t.prototype instanceof Array))
       || (!unionTypes && conf.type.prototype instanceof Array)
 
-    const isSet = !isArray && (conf.type === Set ||
+    const schemaHasSet = !schemaHasArray && (conf.type === Set ||
       (unionTypes && unionTypes.some((t: any) => t === Set || t.prototype instanceof Set))
       || (!unionTypes && conf.type.prototype instanceof Set))
+
+    // For unions, structural branches (Array/Set/Object/Map) only apply when the runtime value actually matches that type.
+    // Without this guard, e.g. Union(Array, String) with a string value would enter the Array branch and iterate chars.
+    const isArray = schemaHasArray && (Array.isArray(value) || value instanceof Array);
+    const isSet = schemaHasSet && (value instanceof Set);
 
     const isObject = !isArray && !isSet && (conf.type === Object || (unionTypes && unionTypes.some((t: any) => t === Object)));
 
@@ -590,10 +601,13 @@ export default class Base {
       }
     }
 
+    // Guard against null-prototype objects (e.g. Object.create(null)) which have no .constructor
+    if (value != null && !value.constructor)
+      throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got null-prototype object`, this.constructor.name, path, conf.type, value, "INVALID_TYPE");
+
     const isOfType = () => {
-      return (unionTypes && unionTypes.some((t: any) => value.constructor === t)) ||
-        value.constructor === conf.type ||
-        ((conf.type === Date || conf.type === Number) && !isNaN(value))
+      const ctor = value.constructor;
+      return (unionTypes && unionTypes.some((t: any) => ctor === t)) || ctor === conf.type
     };
 
     if (!isOfType()) {
@@ -611,7 +625,7 @@ export default class Base {
       })();
 
       if (!isOfType())
-        throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, conf.type, value, "INVALID_TYPE");
+        throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value?.constructor?.name ?? typeof value}`, this.constructor.name, path, conf.type, value, "INVALID_TYPE");
     }
 
     if ((conf.max !== undefined) && (value.length ? value.length > conf.max : value > conf.max)) throw buildError(RangeError, `Value too large for '${path}', maximum: ${conf.max}`, this.validateType, path, conf.max, value, "VALUE_TOO_LARGE");

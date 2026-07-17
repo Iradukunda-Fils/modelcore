@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.2] - 2026-07-17
+
+### Fixed
+
+- **`{ type: undefined }` and `{ type: null }` crash**: `normalizeConf` previously accepted config objects where `type` was `undefined` or `null` (because `'type' in conf` is `true`), causing a raw `TypeError` on the downstream `.prototype` access. Now throws a structured `SchemaDefinitionError` with code `SCHEMA_DEFINITION_ERROR`.
+- **Null-prototype object crash**: Values created via `Object.create(null)` or exotic deserialization (no `.constructor`) caused a raw `TypeError` in `isOfType()` and the error message formatter. Now throws a structured `TypeValidationError` with message `"...got null-prototype object"`.
+- **`Union(Array, String)` silent char-split**: A string value passed to a `Union(Array, String)` field would silently enter the Array branch and iterate characters into `['h','e','l','l','o']`. The structural branch (Array/Set) now checks the runtime value's actual type, not just the schema declaration.
+- **`isOfType()` overly permissive `!isNaN` check**: The `(conf.type === Date || conf.type === Number) && !isNaN(value)` fallback allowed strings like `"42"` to pass type-checking for `Number` fields without coercion, producing a string where a number was expected. Removed; values must match the declared type or go through explicit `coerce: true`.
+- **Missing `static schema` silent no-op**: A subclass with no `static schema` defined would silently construct empty objects. Now throws `SchemaDefinitionError` with message `"ClassName has no schema defined"`.
+
+### Added
+
+- **8 regression tests**: Covering `{ type: undefined }`, `{ type: null }`, null-prototype objects, `Union(Array, String)` with string/array inputs, `Number` strict type rejection, `Number` coercion interop, and missing schema detection.
+
 ## [1.6.0] - 2026-07-12
 
 ### Added
