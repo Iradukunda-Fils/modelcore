@@ -591,7 +591,9 @@ export default class Base {
     }
 
     const isOfType = () => {
-      return (unionTypes && unionTypes.some((t: any) => value.constructor === t)) || value.constructor === conf.type
+      return (unionTypes && unionTypes.some((t: any) => value.constructor === t)) ||
+        value.constructor === conf.type ||
+        ((conf.type === Date || conf.type === Number) && !isNaN(value))
     };
 
     if (!isOfType()) {
@@ -608,7 +610,7 @@ export default class Base {
         }
       })();
 
-      if (!isOfType() || isNaN(value))
+      if (!isOfType())
         throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, conf.type, value, "INVALID_TYPE");
     }
 

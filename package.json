@@ -1,7 +1,7 @@
 {
   "name": "@bufferpunk/modelcore",
-  "version": "1.6.0",
-  "description": "A blazing fast, lightweight and Reactive Class-Based Object Modeling framework",
+  "version": "1.6.1",
+  "description": "A blazing fast, lightweight and Reactive Class-Based Object Modeling and data integrity framework",
   "type": "module",
   "main": "base.js",
   "types": "base.d.ts",

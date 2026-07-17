@@ -465,7 +465,9 @@ export default class Base {
             }
         }
         const isOfType = () => {
-            return (unionTypes && unionTypes.some((t) => value.constructor === t)) || value.constructor === conf.type;
+            return (unionTypes && unionTypes.some((t) => value.constructor === t)) ||
+                value.constructor === conf.type ||
+                ((conf.type === Date || conf.type === Number) && !isNaN(value));
         };
         if (!isOfType()) {
             // Attempt to coerce the value to the correct type if possible. Valuable for date strings from a json for example
@@ -482,7 +484,7 @@ export default class Base {
                             return coerced;
                     }
                 })();
-            if (!isOfType() || isNaN(value))
+            if (!isOfType())
                 throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, conf.type, value, "INVALID_TYPE");
         }
         if ((conf.max !== undefined) && (value.length ? value.length > conf.max : value > conf.max))
