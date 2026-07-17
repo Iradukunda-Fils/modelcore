@@ -848,7 +848,7 @@ test("schema field with { type: undefined } throws SchemaDefinitionError", () =>
     () => new U({ name: "hello" }),
     (err) => {
       assert.ok(err instanceof SchemaDefinitionError);
-      assert.match(err.message, /has no type defined/);
+      assert.match(err.message, /must be a constructor function/);
       assert.equal(err.code, "SCHEMA_DEFINITION_ERROR");
       return true;
     }
@@ -864,7 +864,22 @@ test("schema field with { type: null } throws SchemaDefinitionError", () => {
     () => new U({ name: "hello" }),
     (err) => {
       assert.ok(err instanceof SchemaDefinitionError);
-      assert.match(err.message, /has no type defined/);
+      assert.match(err.message, /must be a constructor function/);
+      return true;
+    }
+  );
+});
+
+test("schema field with non-function type (e.g. string) throws SchemaDefinitionError", () => {
+  class U extends Base {
+    static schema = { name: { type: "string" } };
+  }
+
+  assert.throws(
+    () => new U({ name: "hello" }),
+    (err) => {
+      assert.ok(err instanceof SchemaDefinitionError);
+      assert.match(err.message, /must be a constructor function/);
       return true;
     }
   );
@@ -949,3 +964,21 @@ test("subclass with no static schema throws SchemaDefinitionError", () => {
     }
   );
 });
+
+test("Union(Object, String) with string value preserves string (does not run Object keys validations)", () => {
+  class U extends Base {
+    static schema = {
+      val: {
+        type: Union(Object, String),
+        keys: {
+          prop: { type: String, required: true }
+        }
+      }
+    };
+  }
+
+  const u = new U({ val: "hello" });
+  assert.equal(typeof u.val, "string");
+  assert.equal(u.val, "hello");
+});
+

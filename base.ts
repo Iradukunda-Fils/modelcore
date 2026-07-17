@@ -186,8 +186,8 @@ export function buildError(
 function normalizeConf(conf: FieldConfig | any, path: string): FieldConfig {
   if (typeof conf === "function") return { type: conf } as FieldConfig;
   if (conf && typeof conf === "object" && 'type' in conf) {
-    if (isNone(conf.type))
-      throw buildError(SchemaDefinitionError, `Schema field '${path}' has no type defined`, Base, path, Function, conf.type, "SCHEMA_DEFINITION_ERROR");
+    if (typeof conf.type !== "function")
+      throw buildError(SchemaDefinitionError, `Schema field '${path}' type must be a constructor function`, Base, path, Function, conf.type, "SCHEMA_DEFINITION_ERROR");
     return conf as FieldConfig;
   }
   throw buildError(SchemaDefinitionError, `Invalid schema definition for '${path}'`, Base, path, Object, conf, "SCHEMA_DEFINITION_ERROR");
@@ -502,14 +502,16 @@ export default class Base {
       (unionTypes && unionTypes.some((t: any) => t === Set || t.prototype instanceof Set))
       || (!unionTypes && conf.type.prototype instanceof Set))
 
+    const schemaHasObject = !schemaHasArray && !schemaHasSet && (conf.type === Object || (unionTypes && unionTypes.some((t: any) => t === Object)));
+
+    const schemaHasMap = !schemaHasArray && !schemaHasSet && !schemaHasObject && (conf.type === Map || (unionTypes && unionTypes.some((t: any) => t === Map || t.prototype instanceof Map)));
+
     // For unions, structural branches (Array/Set/Object/Map) only apply when the runtime value actually matches that type.
-    // Without this guard, e.g. Union(Array, String) with a string value would enter the Array branch and iterate chars.
+    // Without this guard, e.g. Union(Array/Object, String) with a string value would enter the structural branch and crash/fail.
     const isArray = schemaHasArray && (Array.isArray(value) || value instanceof Array);
     const isSet = schemaHasSet && (value instanceof Set);
-
-    const isObject = !isArray && !isSet && (conf.type === Object || (unionTypes && unionTypes.some((t: any) => t === Object)));
-
-    const isMap = !isArray && !isSet && !isObject && (conf.type === Map || (unionTypes && unionTypes.some((t: any) => t === Map || t.prototype instanceof Map)))
+    const isObject = schemaHasObject && (typeof value === "object" && value !== null && !Array.isArray(value) && !(value instanceof Set) && !(value instanceof Map));
+    const isMap = schemaHasMap && (value instanceof Map);
 
     if (isArray || isSet) {
       if (!conf.values) throw buildError(
