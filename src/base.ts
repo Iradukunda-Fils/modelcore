@@ -1,0 +1,262 @@
+import {
+  type SchemaDefinition,
+  type FieldConfig,
+  type parserConfig,
+  type SchemaToType,
+  type BaseConstructor,
+  ModelCoreUnion,
+  TypeValidationError,
+  RequiredError,
+  ImmutablePropertyError,
+  ImmutableObjectError,
+  RangeError,
+  EnumValueError,
+  SchemaDefinitionError,
+  isNone,
+  buildError,
+  normalizeConf,
+  createProxyHandler,
+  createArrayHandler,
+  createSetHandler,
+  createObjectHandler,
+  createMapHandler
+} from "../index.js";
+
+const handlerCache = new WeakMap<Base, Map<string, ProxyHandler<any>>>();
+
+export default class Base {
+  declare static schema: SchemaDefinition;
+  declare static immutable?: boolean;
+  declare static validationHandlers: Map<string, Function>;
+  declare static autorequire?: boolean;
+
+  [key: string]: any;
+
+
+  constructor(obj: Record<string, any>, parseConfig?: parserConfig) {
+    this.update(obj, parseConfig, true);
+    const ctor = this.constructor as typeof Base & BaseConstructor;
+    return new Proxy(this, ctor.__proxyHandler || (ctor.__proxyHandler = createProxyHandler(ctor)));
+  }
+
+  static addValidationHandler(handlerName: string, handler: Function) {
+    const ctor = this as typeof Base & BaseConstructor;
+    if (!ctor.validationHandlers) ctor.validationHandlers = new Map();
+    if (!ctor.validationHandlers.has(handlerName)) ctor.validationHandlers.set(handlerName, handler)
+  }
+
+  static removeValidationHandler(handlerName: string) {
+    const ctor = this as typeof Base & BaseConstructor;
+    if (ctor.validationHandlers && ctor.validationHandlers.has(handlerName))
+      ctor.validationHandlers.delete(handlerName)
+  }
+
+  static createFrom<T extends typeof Base>(
+    this: T, 
+    obj: SchemaToType<T['schema']>,
+    parseConfig?: parserConfig
+  ): SchemaToType<T['schema']> {
+    return new this(obj, parseConfig) as any;
+  }
+
+  static create<T extends typeof Base>(
+    this: T, 
+    obj: SchemaToType<T['schema']>,
+    parseConfig?: parserConfig
+  ): SchemaToType<T['schema']> {
+    return new this(obj, parseConfig) as any;
+  }
+
+  update(obj: Record<string, any>, parseConfig?: parserConfig, isNew: boolean = false): void {
+    const ctor = this.constructor as typeof Base & BaseConstructor;
+    try {
+      if (!obj || typeof obj !== "object") throw TypeError("Input must be an object");
+      this.setProperties(ctor.schema, obj as Record<string, any>, isNew);
+    } catch (e) {
+      for (const key in this) {
+        delete this[key];
+        Object.defineProperty(this, key, {
+          value: e,
+          writable: false,
+          enumerable: true,
+          configurable: true,
+        });
+      }
+      if (!parseConfig?.safe) throw e;
+    }
+  }
+
+  toObject(): Record<string, any> {
+    const obj: Record<string, any> = {};
+    for (const key in this) obj[key] = this[key];
+    return obj;
+  }
+
+  json(): string { return JSON.stringify(this.toObject()); }
+
+  private setProperties(schema: SchemaDefinition, data: Record<string, any>, isNew: boolean = false): void {
+    const ctor = this.constructor as typeof Base & BaseConstructor;
+    if (ctor.immutable && !isNew)
+      throw buildError(
+        ImmutableObjectError, `Cannot update immutable object of type ${ctor.name}`,
+        ctor.name, "", null, data, "IMMUTABLE_CLASS_UPDATE"
+      );
+
+    for (const key in schema) {
+      if (!isNew && !(key in data)) continue;
+      const conf = schema[key];
+      const value = data[key];
+      const result = this.runValidate(conf, value, key, isNew);
+      if (isNew) this[key] = result;
+      else this.__safeSet__(key, result);
+    }
+  }
+
+  runValidate(confPassed: FieldConfig | Function, valuePassed: any, path: string, isNew: boolean): any {
+    const { conf, value } = this.validateType(confPassed, valuePassed, path);
+    let toReturn: typeof conf.type;
+    const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
+
+    const isArray = (conf.type === Array ||
+      (unionTypes && unionTypes.some((t: any) => t === Array || t.prototype instanceof Array))
+      || (!unionTypes && conf.type.prototype instanceof Array)) && value instanceof Array;
+
+    const isSet = (!isArray && (conf.type === Set ||
+      (unionTypes && unionTypes.some((t: any) => t === Set || t.prototype instanceof Set))
+      || (!unionTypes && conf.type.prototype instanceof Set))) && value instanceof Set;
+
+    const isMap = (!isArray && !isSet &&
+      (conf.type === Map || (unionTypes && unionTypes.some((t: any) => t === Map || t.prototype instanceof Map))))
+      && value instanceof Map;
+
+    const isObject = (!isArray && !isSet &&
+      (conf.type === Object || (unionTypes && unionTypes.some((t: any) => t === Object)))) &&
+      Object.prototype.toString.call(value) === "[object Object]";
+
+    if (isArray || isSet) {
+      if (!conf.values) throw buildError(
+        SchemaDefinitionError, `Missing array value configuration at ${path}`,
+        this.runValidate, path, Object, value, "SCHEMA_DEFINITION_ERROR"
+      );
+
+      toReturn = new conf.type();
+      const arrValue = isArray ? value : Array.from(value);
+
+      for (let i = 0; i < arrValue.length; i++) {
+        const validated = this.runValidate(conf.values!, arrValue[i], `${path}[${i}]`, isNew);
+        if (isSet) toReturn.add(validated);
+        else toReturn[i] = validated;
+      }
+
+      let handler: ProxyHandler<any> | undefined;
+      if (!isNew) {
+        let cache = handlerCache.get(this);
+        if (!cache) { cache = new Map(); handlerCache.set(this, cache); }
+        handler = cache.get(path);
+        if (!handler) {
+          handler = isArray ? createArrayHandler(this, conf.values!, path) : createSetHandler(this, conf.values!, path);
+          cache.set(path, handler);
+        }
+      } else {
+        handler = isArray ? createArrayHandler(this, conf.values!, path) : createSetHandler(this, conf.values!, path);
+      }
+      toReturn = new Proxy(toReturn, handler);
+    }
+
+    else if (isObject || isMap) {
+      if (!conf.keys && !conf.properties)
+        throw buildError(SchemaDefinitionError, `Object properties schema definition missing for '${path}'`, this.runValidate, path, Object, conf, 'SCHEMA_DEFINITION_ERROR')
+
+      const obj: Record<string, typeof conf.type> | Map<string, typeof conf.type> = isObject ? {} : new Map();
+      for (const childKey in conf.keys || conf.properties || {}) {
+        const childConf = (conf.keys || conf.properties || {})[childKey];
+        const childVal = this.runValidate(childConf, isObject ? value?.[childKey] : value.get(childKey), `${path}.${childKey}`, isNew);;
+        if (isObject) (obj as Record<string, any>)[childKey] = childVal;
+        else obj.set(childKey, childVal);
+      }
+
+      let handler: ProxyHandler<any> | undefined;
+      if (!isNew) {
+        let cache = handlerCache.get(this);
+        if (!cache) { cache = new Map(); handlerCache.set(this, cache); }
+        handler = cache.get(path);
+        if (!handler) {
+          handler = isObject ? createObjectHandler(this, conf, path) : createMapHandler(this, conf, path);
+          cache.set(path, handler);
+        }
+      } else {
+        handler = isObject ? createObjectHandler(this, conf, path) : createMapHandler(this, conf, path);
+      }
+      toReturn = new Proxy(obj, handler);
+    }
+
+    else toReturn = value;
+
+    if (conf.immutable && !isNew) {
+      const startObj = this;
+      const p = path.match(/[^.[\]]+/g)?.reduce((o, key) => o?.[key], startObj);
+      if (!isNone(p) && p !== toReturn)
+        throw buildError(ImmutablePropertyError, `Cannot update immutable property '${path}'`, this.constructor.name, path, null, value, "IMMUTABLE_PROPERTY_UPDATE");
+    }
+
+    if (conf.validate && typeof conf.validate === "function") conf.validate(toReturn);
+
+    return toReturn;
+  }
+
+  private validateType(cnf: any, value: any, path: string): { conf: FieldConfig; value: any } {
+    const conf: FieldConfig = normalizeConf(cnf, path);
+    const ctor = this.constructor as typeof Base & BaseConstructor;
+    const unionTypes = conf.type === ModelCoreUnion ? new conf.type() : conf.type.prototype instanceof ModelCoreUnion ? new conf.type() : null;
+    if (conf.beforeChecks && typeof conf.beforeChecks === "function") {
+      const newVal = conf.beforeChecks(value);
+      if (!isNone(newVal) || conf.optional) value = newVal;
+    }
+
+    if (isNone(value)) {
+      if (!isNone(conf.default)) value = typeof conf.default === 'function' ? conf.default() : conf.default;
+      if (isNone(value)) {
+        if (conf.optional || conf.required === false) return { conf, value };
+        if (conf.required === true || conf.optional === false || ctor.autorequire || ctor.autorequire === undefined)
+          throw buildError(RequiredError, `Missing required property at '${path}'`, this.validateType, path, conf.type, value, "REQUIRED_PROPERTY_MISSING");
+        return { conf, value };
+      }
+    }
+
+    const isOfType = () => {
+      return (unionTypes && unionTypes.some((t: any) => value.constructor === t)) || value.constructor === conf.type
+    };
+
+    if (!isOfType()) {
+      // Attempt to coerce the value to the correct type if possible. Valuable for date strings from a json for example
+      if (conf.coerce) value = !unionTypes ? new conf.type(value) : (() => {
+        // dangerous but necessary! Javascript will most probably coerce in an invalid way 
+        // like `new Array({}) = [{}]` instead of throwing so we can check the next type.
+        // We have to accept the language's downsides here. 
+        // Avoid coercion on Unions unless you're sure about the input, as it can lead to unexpected results.
+        // You can instead use beforeChecks() hook to preprocess the value for safety and control.
+        for (const t of unionTypes) {
+          const coerced = new t(value);
+          if (coerced.constructor === t) return coerced;
+        }
+      })();
+
+      if (!isOfType() || ((conf.type === Date || conf.type === Number) && isNaN(value)))
+        throw buildError(TypeValidationError, `Invalid type at '${path}', expected ${conf.type.name}, got ${value.constructor.name}`, this.constructor.name, path, conf.type, value, "INVALID_TYPE");
+    }
+
+    if ((conf.max !== undefined) && (value.length ? value.length > conf.max : value > conf.max)) throw buildError(RangeError, `Value too large for '${path}', maximum: ${conf.max}`, this.validateType, path, conf.max, value, "VALUE_TOO_LARGE");
+    if ((conf.min !== undefined) && (value.length ? value.length < conf.min : value < conf.min)) throw buildError(RangeError, `Value too small for '${path}', minimum: ${conf.min}`, this.validateType, path, conf.min, value, "VALUE_TOO_SMALL");
+    if (conf.enum && !conf.enum.includes(value)) throw buildError(EnumValueError, `Invalid value for '${path}', expected one of: ${conf.enum.join(", ")}`, this.validateType, path, conf.enum, value, "INVALID_ENUM_VALUE");
+
+    if (ctor.validationHandlers)
+      for (const [, handler] of ctor.validationHandlers)
+        if (typeof handler === "function") handler(conf, value, path);
+
+    if (conf.afterChecks && typeof conf.afterChecks === "function") {
+      const newVal = conf.afterChecks(value);
+      if (!isNone(newVal) || conf.optional) value = newVal;
+    }
+    return { conf, value };
+  }
+}
