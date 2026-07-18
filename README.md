@@ -47,7 +47,7 @@ npm install @bufferpunk/modelcore
 ## Quick start
 
 ```typescript
-import Base, { SchemaDefinition } from '@bufferpunk/modelcore';
+import { Base, SchemaDefinition } from '@bufferpunk/modelcore';
 
 class User extends Base {
   static schema = {
@@ -130,6 +130,8 @@ interface FieldConfig {
 
 Any field value that is a constructor function (e.g., `String`, `Email`) is normalized to `{ type: thatFunction }`. So `name: String` is equivalent to `name: { type: String }`.
 
+The `type` property must be a constructor function — `{ type: undefined }`, `{ type: null }`, or `{ type: "string" }` will throw a `SchemaDefinitionError` at construction time.
+
 ---
 
 ## Immutability
@@ -182,6 +184,8 @@ post.author.name = 'Bob';      // validated via nested proxy
 ```
 
 Nested structures are wrapped in handlers that enforce the same rules. Array mutations (`push`, `unshift`, `splice`, `concat`, index assignment) are all validated. `fill()` is forbidden to prevent bulk silent corruption.
+
+Container types (Array, Set, Map, Object) are validated against the **runtime type of the input value**. A schema field declared as `{ type: Array }` will reject non-array inputs; `{ type: Set }` requires `instanceof Set`; `{ type: Map }` requires `instanceof Map`; `{ type: Object }` requires a plain object (`[object Object]`). This improves type-safety for union schemas — a `Union(Object, String)` field will skip object-key validation when the value is a string.
 
 ---
 
@@ -267,7 +271,7 @@ Everything behave naturally, with added validation.
 Register reusable validation logic that runs on **every field, every model, every time** — like a plugin system for the validation pipeline.
 
 ```typescript
-import Base, { buildError, ValueError } from '@bufferpunk/modelcore';
+import { Base, buildError, ValueError } from '@bufferpunk/modelcore';
 
 // 1. Define a handler that reads custom config properties
 function validateRegex(conf: any, value: any, path: string) {
@@ -331,6 +335,29 @@ class Article extends Base {
 }
 ```
 
+### Internal exports
+
+In addition to `Base`, the package exposes its internals for advanced use cases:
+
+```typescript
+import {
+  Base,
+  buildError,                 // Typed error factory
+  normalizeConf,              // Schema config normalizer
+  isNone,                     // null/undefined check
+  createProxyHandler,         // Main Proxy handler
+  createArrayHandler,         // Array mutation validator
+  createSetHandler,           // Set mutation validator
+  createMapHandler,           // Map mutation validator
+  createObjectHandler,        // Object mutation validator
+  ModelCoreError,             // Base error class
+  ModelCoreUnion,             // Union base class
+  Union,                      // Union type helper
+  SchemaDefinitionError,      // Schema validation error
+  // … other error classes
+} from '@bufferpunk/modelcore';
+```
+
 ### `buildError()` helper
 
 To let handlers throw consistent, typed errors:
@@ -354,7 +381,7 @@ throw buildError(
 ## Union types
 
 ```typescript
-import Base, { SchemaDefinition, Union } from '@bufferpunk/modelcore';
+import { Base, SchemaDefinition, Union } from '@bufferpunk/modelcore';
 
 class User extends Base {
   static schema = {
@@ -464,15 +491,14 @@ All errors extend `ModelCoreError`, which carries `source`, `path`, `expected`, 
 
 ## Performance
 
-ModelCore achieves **>380K ops/sec** across all operations on 100K iterations (Node 24) on a regular laptop:
+ModelCore achieves **>200K ops/sec** on full model construction with nested containers (5 fields, 100K iterations, Node 24). Scalar-only models reach **~1.9M ops/sec**.
 
 | Operation | Ops/sec |
 |---|---|---|
-| `construct + validate` (5 fields incl. nested) | ~383K |
-| `Model.create()` factory | ~383K |
-| `batch update validated fields` (partial 3/5 fields) | ~399K |
-
-This is comparable to the fastest validation libraries, while also providing continuous enforcement and nested object support.
+| `construct + validate` (3 scalar fields) | ~380K |
+| `construct + validate` (5 fields incl. nested) | ~380K |
+| `Model.create()` factory | ~380K |
+| `bulk update validated fields` (partial 3/5 fields) | ~390K |
 
 Run the included benchmark yourself:
 
@@ -487,6 +513,8 @@ BENCH_ITERATIONS=100000 npm run bench
 ### `class Base`
 
 ```typescript
+import { Base } from '@bufferpunk/modelcore';
+
 class Base {
   static schema: SchemaDefinition;
   static immutable?: boolean;
