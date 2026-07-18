@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import Base from '../base.js';
+import { Base } from '../index.js';
 
 class Email {
   constructor(value) {
