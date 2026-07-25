@@ -4,7 +4,7 @@ export interface FieldConfig {
     optional?: boolean;
     required?: boolean;
     default?: any;
-    enum?: any[];
+    enum?: any[] | readonly any[];
     max?: number;
     min?: number;
     beforeChecks?: (value: any) => any;
@@ -36,45 +36,6 @@ export interface errorObject {
     received?: any;
     code?: string;
 }
-export declare class ModelCoreError extends Error {
-    source: string | Function | undefined;
-    path: Array<string | number>;
-    expected: any;
-    received: any;
-    code: string | undefined;
-    static errorName: string;
-    constructor(errObj: errorObject);
-}
-export declare class ImmutableObjectError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class ImmutablePropertyError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class ValidationError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class EnumValueError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class RangeError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class TypeValidationError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class MissingPropertyError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class SchemaDefinitionError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class RequiredError extends ModelCoreError {
-    static errorName: string;
-}
-export declare class ValueError extends ModelCoreError {
-    static errorName: string;
-}
 export declare function Union<T extends readonly (abstract new (...args: any) => any)[]>(...args: T): {
     new (): InstanceType<T[number]>;
     unionTypes: T;
@@ -86,6 +47,9 @@ export declare function Union<T extends readonly (abstract new (...args: any) =>
     of<T_1>(...items: T_1[]): T_1[];
     readonly [Symbol.species]: ArrayConstructor;
 };
+export declare class ModelCoreUnion extends Array<any> {
+    static unionTypes: readonly any[];
+}
 type UnwrapTypeConstructor<T> = T extends {
     unionTypes: readonly any[];
 } ? InstanceType<T['unionTypes'][number]> : T extends StringConstructor ? string : T extends NumberConstructor ? number : T extends BooleanConstructor ? boolean : T extends DateConstructor ? Date : T extends SetConstructor ? Set<any> : T extends MapConstructor ? Map<any, any> : T extends ArrayConstructor ? any[] : T extends ObjectConstructor ? Record<string, any> : T extends new (...args: any[]) => infer R ? R : unknown;
@@ -119,23 +83,4 @@ export type SchemaToType<S extends Record<string, any>> = {
 } & {
     [K in OptionalKeys<S>]?: InferFieldRaw<S[K]>;
 };
-export declare function buildError(errorType: new (errObj: errorObject) => ModelCoreError, message: string, source?: string | Function, path?: string, expected?: any, received?: any, code?: string): ModelCoreError;
-export default class Base {
-    static schema: SchemaDefinition;
-    static immutable?: boolean;
-    static validationHandlers: Map<string, Function>;
-    static autorequire?: boolean;
-    [key: string]: any;
-    constructor(obj: Record<string, any>, parseConfig?: parserConfig);
-    static addValidationHandler(handlerName: string, handler: Function): void;
-    static removeValidationHandler(handlerName: string): void;
-    static createFrom<T extends typeof Base>(this: T, obj: SchemaToType<T['schema']>, parseConfig?: parserConfig): SchemaToType<T['schema']>;
-    static create<T extends typeof Base>(this: T, obj: SchemaToType<T['schema']>, parseConfig?: parserConfig): SchemaToType<T['schema']>;
-    update(obj: Record<string, any>, parseConfig?: parserConfig, isNew?: boolean): void;
-    toObject(): Record<string, any>;
-    json(): string;
-    private setProperties;
-    runValidate(confPassed: FieldConfig | Function, valuePassed: any, path: string, isNew: boolean): any;
-    private validateType;
-}
 export {};

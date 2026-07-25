@@ -2,7 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.6.0] - 2026-07-12
+## [2.0.0] - 2026-07-18
+
+### ⚠️ Breaking Changes
+
+- **Source code refactored into `src/` modules**: Single-file `base.ts` split into `src/typing.ts` (types, type inference, `Union`), `src/errors.ts` (error classes, `parsePath`), `src/utils.ts` (helpers, Proxy handlers), and `src/base.ts` (Base class). Unified re-exports from `index.ts`. Import paths unchanged (`@bufferpunk/modelcore`), but users importing directly from `base.ts` must update to `index.ts`.
+- **Named exports**: `Base` is now a named export — `import { Base } from '@bufferpunk/modelcore'` (was default export `import Base from ...`).
+- **Container runtime type guards**: `isArray` now requires `value instanceof Array`; `isSet` requires `value instanceof Set`; `isMap` requires `value instanceof Map`; `isObject` requires `Object.prototype.toString.call(value) === "[object Object]"`. A schema field `{ type: Array }` will reject non-array inputs, `{ type: Set }` rejects non-Set inputs, etc. This prevents subtle bugs in Union schemas and improves type safety.
+- **`normalizeConf` validates `type` is a function**: `{ type: undefined }`, `{ type: null }`, or `{ type: "string" }` now throws `SchemaDefinitionError` at construction time (was silently accepted).
+- **`isNaN` check for Date and Number**: placed check after coercion to ensure invalid dates and numbers are rejected.
+
+### Added
+
+- **Extended test coverage**: 8 new tests (60 total) — `{ type: undefined/null/"string" }` schema rejection, `Union(Array, String)` value discrimination, scalar-only coerce tests, and `Union(Object, String)` skipping object-key validation for string values.
+- **Readonly enum array support**: Updated `FieldConfig.enum` to allow `readonly any[]` for `as const` schema declarations.
+
+### Changed
+
+- **Module structure**: Clean separation of concerns — types, errors, and utils each in their own file with proper exports.
+- **Performance**: Optimized container type-dispatch with early runtime-type checks to avoid unnecessary iteration on mismatched Union branches.
+
+## 1.6.0 - 2026-07-12
 
 ### Added
 

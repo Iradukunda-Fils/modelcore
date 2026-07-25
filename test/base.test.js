@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import Base, { Union, buildError, ValueError } from "../base.ts";
+import { Base, Union, buildError, ValueError, SchemaDefinitionError, TypeValidationError } from "../index.ts";
 
 /* Tests to verify core functionality. You can add more as needed. Send a PR to be included. */
 
@@ -835,4 +835,147 @@ test("error.expected contains meaningful values (type, min, max, enum)", () => {
   try { new U({ name: "x", role: "c", count: 0 }); } catch (e) {
     assert.ok(e.expected != null);
   }
+});
+
+// ==================== NULL & EDGE-CASE GUARDS ====================
+
+test("schema field with { type: undefined } throws SchemaDefinitionError", () => {
+  class U extends Base {
+    static schema = { name: { type: undefined } };
+  }
+
+  assert.throws(
+    () => new U({ name: "hello" }),
+    (err) => {
+      assert.ok(err instanceof SchemaDefinitionError);
+      assert.match(err.message, /Invalid schema definition/);
+      assert.equal(err.code, "SCHEMA_DEFINITION_ERROR");
+      return true;
+    }
+  );
+});
+
+test("schema field with { type: null } throws SchemaDefinitionError", () => {
+  class U extends Base {
+    static schema = { name: { type: null } };
+  }
+
+  assert.throws(
+    () => new U({ name: "hello" }),
+    (err) => {
+      assert.ok(err instanceof SchemaDefinitionError);
+      assert.match(err.message, /Invalid schema definition/);
+      assert.equal(err.code, "SCHEMA_DEFINITION_ERROR");
+      return true;
+    }
+  );
+});
+
+test("schema field with non-function type (e.g. string) throws SchemaDefinitionError", () => {
+  class U extends Base {
+    static schema = { name: { type: "string" } };
+  }
+
+  assert.throws(
+    () => new U({ name: "hello" }),
+    (err) => {
+      assert.ok(err instanceof SchemaDefinitionError);
+      assert.match(err.message, /Invalid schema definition/);
+      assert.equal(err.code, "SCHEMA_DEFINITION_ERROR");
+      return true;
+    }
+  );
+});
+
+test("Union(Array, String) with string value preserves string (no char-split)", () => {
+  class U extends Base {
+    static schema = {
+      val: { type: Union(Array, String), values: String }
+    };
+  }
+
+  const u = new U({ val: "hello" });
+  assert.equal(typeof u.val, "string");
+  assert.equal(u.val, "hello");
+  assert.equal(Array.isArray(u.val), false);
+});
+
+test("Union(Array, String) with array value still validates as array", () => {
+  class U extends Base {
+    static schema = {
+      val: { type: Union(Array, String), values: String }
+    };
+  }
+
+  const u = new U({ val: ["a", "b"] });
+  assert.ok(Array.isArray(u.val));
+  assert.deepEqual(Array.from(u.val), ["a", "b"]);
+});
+
+test("Number field rejects string without coerce flag", () => {
+  class U extends Base {
+    static schema = { age: { type: Number } };
+  }
+
+  assert.throws(
+    () => new U({ age: "42" }),
+    (err) => {
+      assert.ok(err instanceof TypeValidationError);
+      assert.equal(err.code, "INVALID_TYPE");
+      return true;
+    }
+  );
+});
+
+test("Number field with coerce: true converts string to number", () => {
+  class U extends Base {
+    static schema = { age: { type: Number, coerce: true } };
+  }
+
+  const u = new U({ age: "42" });
+  assert.ok(u.age instanceof Number || typeof u.age === "number");
+});
+
+test("Union(Object, String) with string value preserves string (does not run Object keys validations)", () => {
+  class U extends Base {
+    static schema = {
+      val: {
+        type: Union(Object, String),
+        keys: {
+          prop: { type: String, required: true }
+        }
+      }
+    };
+  }
+
+  const u = new U({ val: "hello" });
+  assert.equal(typeof u.val, "string");
+  assert.equal(u.val, "hello");
+});
+
+test("supports readonly enum arrays (as const assertions)", () => {
+  const RO_ROLES = Object.freeze(["ADMIN", "USER", "GUEST"]);
+  class U extends Base {
+    static schema = {
+      role: { type: String, enum: RO_ROLES }
+    };
+  }
+
+  const u = new U({ role: "ADMIN" });
+  assert.equal(u.role, "ADMIN");
+  assert.throws(() => new U({ role: "INVALID" }), /Invalid value for 'role'/);
+});
+
+test("handles null-prototype inputs gracefully", () => {
+  class U extends Base {
+    static schema = {
+      name: { type: String }
+    };
+  }
+
+  const nullProtoObj = Object.create(null);
+  nullProtoObj.name = "Alice";
+
+  const u = new U(nullProtoObj);
+  assert.equal(u.name, "Alice");
 });
