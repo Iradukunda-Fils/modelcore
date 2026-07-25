@@ -982,3 +982,30 @@ test("Union(Object, String) with string value preserves string (does not run Obj
   assert.equal(u.val, "hello");
 });
 
+test("supports readonly enum arrays (as const assertions)", () => {
+  const RO_ROLES = Object.freeze(["ADMIN", "USER", "GUEST"]);
+  class U extends Base {
+    static schema = {
+      role: { type: String, enum: RO_ROLES }
+    };
+  }
+
+  const u = new U({ role: "ADMIN" });
+  assert.equal(u.role, "ADMIN");
+  assert.throws(() => new U({ role: "INVALID" }), /Invalid value for 'role'/);
+});
+
+test("handles null-prototype inputs gracefully", () => {
+  class U extends Base {
+    static schema = {
+      name: { type: String }
+    };
+  }
+
+  const nullProtoObj = Object.create(null);
+  nullProtoObj.name = "Alice";
+
+  const u = new U(nullProtoObj);
+  assert.equal(u.name, "Alice");
+});
+
