@@ -1,4 +1,4 @@
-import Base, { type FieldConfig, type SchemaDefinition, Union, ValueError, buildError } from "../base.ts";
+import { Base, type FieldConfig, type SchemaDefinition, Union, ValueError, buildError } from "../index.ts";
 
 class Email extends String {
   /**
@@ -126,7 +126,7 @@ User.addValidationHandler("regexValidator", validateRegex);
 
 // use this `createFrom` factory method to get proper type inference and parsing on input
 // If you don't care about type inference and type hints, you can also use the constructor directly: `new User(obj)`
-const user = User.createFrom({ 
+const user = User.createFrom({
   name: "   John    Doe   ",
   nickname: "Johnny",
   channel: new Map(Object.entries({

@@ -2,21 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.6.2] - 2026-07-17
+## [2.0.0] - 2026-07-18
 
-### Fixed
+### ⚠️ Breaking Changes
 
-- **`{ type: undefined }` and `{ type: null }` crash**: `normalizeConf` previously accepted config objects where `type` was `undefined` or `null` (because `'type' in conf` is `true`), causing a raw `TypeError` on the downstream `.prototype` access. Now throws a structured `SchemaDefinitionError` with code `SCHEMA_DEFINITION_ERROR`.
-- **Null-prototype object crash**: Values created via `Object.create(null)` or exotic deserialization (no `.constructor`) caused a raw `TypeError` in `isOfType()` and the error message formatter. Now throws a structured `TypeValidationError` with message `"...got null-prototype object"`.
-- **`Union(Array, String)` silent char-split**: A string value passed to a `Union(Array, String)` field would silently enter the Array branch and iterate characters into `['h','e','l','l','o']`. The structural branch (Array/Set) now checks the runtime value's actual type, not just the schema declaration.
-- **`isOfType()` overly permissive `!isNaN` check**: The `(conf.type === Date || conf.type === Number) && !isNaN(value)` fallback allowed strings like `"42"` to pass type-checking for `Number` fields without coercion, producing a string where a number was expected. Removed; values must match the declared type or go through explicit `coerce: true`.
-- **Missing `static schema` silent no-op**: A subclass with no `static schema` defined would silently construct empty objects. Now throws `SchemaDefinitionError` with message `"ClassName has no schema defined"`.
+- **Source code refactored into `src/` modules**: Single-file `base.ts` split into `src/typing.ts` (types, type inference, `Union`), `src/errors.ts` (error classes, `parsePath`), `src/utils.ts` (helpers, Proxy handlers), and `src/base.ts` (Base class). Unified re-exports from `index.ts`. Import paths unchanged (`@bufferpunk/modelcore`), but users importing directly from `base.ts` must update to `index.ts`.
+- **Named exports**: `Base` is now a named export — `import { Base } from '@bufferpunk/modelcore'` (was default export `import Base from ...`).
+- **Container runtime type guards**: `isArray` now requires `value instanceof Array`; `isSet` requires `value instanceof Set`; `isMap` requires `value instanceof Map`; `isObject` requires `Object.prototype.toString.call(value) === "[object Object]"`. A schema field `{ type: Array }` will reject non-array inputs, `{ type: Set }` rejects non-Set inputs, etc. This prevents subtle bugs in Union schemas and improves type safety.
+- **`normalizeConf` validates `type` is a function**: `{ type: undefined }`, `{ type: null }`, or `{ type: "string" }` now throws `SchemaDefinitionError` at construction time (was silently accepted).
+- **`isNaN` check for Date and Number**: placed check after coercion to ensure invalid dates and numbers are rejected.
 
 ### Added
 
-- **8 regression tests**: Covering `{ type: undefined }`, `{ type: null }`, null-prototype objects, `Union(Array, String)` with string/array inputs, `Number` strict type rejection, `Number` coercion interop, and missing schema detection.
+- **Extended test coverage**: 8 new tests (60 total) — `{ type: undefined/null/"string" }` schema rejection, `Union(Array, String)` value discrimination, scalar-only coerce tests, and `Union(Object, String)` skipping object-key validation for string values.
+- **Readonly enum array support**: Updated `FieldConfig.enum` to allow `readonly any[]` for `as const` schema declarations.
 
-## [1.6.0] - 2026-07-12
+### Changed
+
+- **Module structure**: Clean separation of concerns — types, errors, and utils each in their own file with proper exports.
+- **Performance**: Optimized container type-dispatch with early runtime-type checks to avoid unnecessary iteration on mismatched Union branches.
+
+## 1.6.0 - 2026-07-12
 
 ### Added
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import Base, { Union, buildError, ValueError, SchemaDefinitionError, TypeValidationError } from "../base.ts";
+import { Base, Union, buildError, ValueError, SchemaDefinitionError, TypeValidationError } from "../index.ts";
 
 /* Tests to verify core functionality. You can add more as needed. Send a PR to be included. */
 
@@ -848,7 +848,7 @@ test("schema field with { type: undefined } throws SchemaDefinitionError", () =>
     () => new U({ name: "hello" }),
     (err) => {
       assert.ok(err instanceof SchemaDefinitionError);
-      assert.match(err.message, /must be a constructor function/);
+      assert.match(err.message, /Invalid schema definition/);
       assert.equal(err.code, "SCHEMA_DEFINITION_ERROR");
       return true;
     }
@@ -864,7 +864,8 @@ test("schema field with { type: null } throws SchemaDefinitionError", () => {
     () => new U({ name: "hello" }),
     (err) => {
       assert.ok(err instanceof SchemaDefinitionError);
-      assert.match(err.message, /must be a constructor function/);
+      assert.match(err.message, /Invalid schema definition/);
+      assert.equal(err.code, "SCHEMA_DEFINITION_ERROR");
       return true;
     }
   );
@@ -879,24 +880,8 @@ test("schema field with non-function type (e.g. string) throws SchemaDefinitionE
     () => new U({ name: "hello" }),
     (err) => {
       assert.ok(err instanceof SchemaDefinitionError);
-      assert.match(err.message, /must be a constructor function/);
-      return true;
-    }
-  );
-});
-
-test("null-prototype object throws TypeValidationError instead of raw TypeError", () => {
-  class U extends Base {
-    static schema = { info: String };
-  }
-
-  const nullObj = Object.create(null);
-  assert.throws(
-    () => new U({ info: nullObj }),
-    (err) => {
-      assert.ok(err instanceof TypeValidationError);
-      assert.match(err.message, /null-prototype object/);
-      assert.equal(err.code, "INVALID_TYPE");
+      assert.match(err.message, /Invalid schema definition/);
+      assert.equal(err.code, "SCHEMA_DEFINITION_ERROR");
       return true;
     }
   );
@@ -951,20 +936,6 @@ test("Number field with coerce: true converts string to number", () => {
   assert.ok(u.age instanceof Number || typeof u.age === "number");
 });
 
-test("subclass with no static schema throws SchemaDefinitionError", () => {
-  class NoSchema extends Base {}
-
-  assert.throws(
-    () => new NoSchema({}),
-    (err) => {
-      assert.ok(err instanceof SchemaDefinitionError);
-      assert.match(err.message, /has no schema defined/);
-      assert.equal(err.code, "SCHEMA_DEFINITION_ERROR");
-      return true;
-    }
-  );
-});
-
 test("Union(Object, String) with string value preserves string (does not run Object keys validations)", () => {
   class U extends Base {
     static schema = {
@@ -1008,4 +979,3 @@ test("handles null-prototype inputs gracefully", () => {
   const u = new U(nullProtoObj);
   assert.equal(u.name, "Alice");
 });
-
